@@ -31,6 +31,8 @@ CREATE INDEX IF NOT EXISTS laps_session ON laps(session_id);
 
 _MIGRATIONS = [
     "ALTER TABLE laps ADD COLUMN valid INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE sessions ADD COLUMN vehicle TEXT",
+    "ALTER TABLE sessions ADD COLUMN track TEXT",
 ]
 
 _MIN_VALID_LAP_MS = 10_000   # ignore sub-10-second "laps" (outlap artefacts)
@@ -53,7 +55,9 @@ class TelemetryLogger:
         self._session_id: int | None = None
         self._prev_lap: float | None = None
         self._prev_last_ms: int | None = None
-        self._lap_ever_invalid  = False   # True if IsLapValid was 0 at any point this lap
+        self._lap_ever_invalid  = False
+        self._session_vehicle: str | None = None
+        self._session_track:   str | None = None
         self.on_lap_recorded: Callable[[], None] | None = None
 
     def _run_migrations(self) -> None:
@@ -83,14 +87,45 @@ class TelemetryLogger:
 
     def stop_session(self) -> None:
         with self._lock:
-            self._session_id  = None
-            self._prev_lap    = None
+            self._session_id   = None
+            self._prev_lap     = None
             self._prev_last_ms = None
+            self._session_vehicle = None
+            self._session_track   = None
+
+    def delete_session(self, session_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM laps WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.commit()
+
+    def _update_session_meta(self, vehicle: str | None, track: str | None) -> None:
+        """Write vehicle/track to the session row the first time they appear."""
+        if self._session_id is None:
+            return
+        changed = (vehicle and vehicle != self._session_vehicle) or \
+                  (track   and track   != self._session_track)
+        if not changed:
+            return
+        if vehicle:
+            self._session_vehicle = vehicle
+        if track:
+            self._session_track = track
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET vehicle=?, track=? WHERE id=?",
+                (self._session_vehicle, self._session_track, self._session_id),
+            )
+            self._conn.commit()
 
     def feed(self, telemetry: dict) -> None:
         """Call with the latest telemetry dict. Detects and stores lap completions."""
         if self._session_id is None:
             return
+        self._update_session_meta(
+            telemetry.get("vehicle") or None,
+            telemetry.get("track")   or None,
+        )
         cur_lap   = telemetry.get("current_lap")
         last_secs = telemetry.get("last_lap_time", 0.0)
         if cur_lap is None:
@@ -156,12 +191,12 @@ class TelemetryLogger:
 
     def session_history(self, limit: int = 50) -> list[tuple]:
         """Return summary rows for the most recent sessions.
-        Columns: (id, started_at, game, lap_count, best_ms, avg_ms)
+        Columns: (id, started_at, game, vehicle, track, lap_count, best_ms, avg_ms)
         """
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT s.id, s.started_at, s.game,
+                SELECT s.id, s.started_at, s.game, s.vehicle, s.track,
                        COUNT(l.id)        AS lap_count,
                        MIN(l.lap_time_ms) AS best_ms,
                        CAST(AVG(l.lap_time_ms) AS INTEGER) AS avg_ms

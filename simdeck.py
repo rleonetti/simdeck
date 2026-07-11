@@ -285,7 +285,7 @@ class LIFXTab(QWidget):
         hdr_h.setContentsMargins(0, 0, 0, 4)
         hdr_h.setSpacing(4)
         lights_hdr = QLabel("LIGHTS")
-        lights_hdr.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {_MUTED};")
+        lights_hdr.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
         hdr_h.addWidget(lights_hdr)
         self._spinner_lbl = QLabel("")
         self._spinner_lbl.setStyleSheet(f"font-size: 17px; color: {_YELLOW};")
@@ -468,7 +468,7 @@ class LIFXTab(QWidget):
     def _section(self, layout: QVBoxLayout, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setStyleSheet(
-            f"font-size: 17px; font-weight: bold; color: {_MUTED};"
+            f"font-size: 19px; font-weight: bold; color: {_MUTED};"
             " padding-top: 12px; padding-bottom: 2px; padding-left: 10px;"
         )
         layout.addWidget(lbl)
@@ -508,7 +508,7 @@ class LIFXTab(QWidget):
         hdr, group = self._effect_groups[effect_name]
         color = "#d5d5d5" if enabled else _MUTED
         hdr.setStyleSheet(
-            f"font-size: 17px; font-weight: bold; color: {color};"
+            f"font-size: 19px; font-weight: bold; color: {color};"
             " padding-top: 12px; padding-bottom: 2px; padding-left: 10px;"
         )
         group.setEnabled(enabled)
@@ -860,7 +860,7 @@ class SplitterTab(QWidget):
 
         targets_hdr = QLabel("FORWARD TARGETS")
         targets_hdr.setStyleSheet(
-            f"font-size: 17px; font-weight: bold; color: {_MUTED}; padding-top: 6px;"
+            f"font-size: 19px; font-weight: bold; color: {_MUTED}; padding-top: 6px;"
         )
         v.addWidget(targets_hdr)
 
@@ -1162,7 +1162,7 @@ class LoggerTab(QWidget):
         # Lap table header label
         lap_hdr = QLabel("LAP HISTORY")
         lap_hdr.setStyleSheet(
-            f"font-size: 17px; font-weight: bold; color: {_MUTED}; padding-top: 4px;"
+            f"font-size: 19px; font-weight: bold; color: {_MUTED}; padding-top: 4px;"
         )
         root.addWidget(lap_hdr)
 
@@ -1172,7 +1172,7 @@ class LoggerTab(QWidget):
 
         # Footer: summary
         self._summary_lbl = QLabel("")
-        self._summary_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        self._summary_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 16px;")
         root.addWidget(self._summary_lbl)
 
     def _stat_box(self, layout: QHBoxLayout, label: str, value: str,
@@ -1183,11 +1183,11 @@ class LoggerTab(QWidget):
         v.setContentsMargins(10, 6, 10, 6)
         v.setSpacing(2)
         hdr = QLabel(label)
-        hdr.setStyleSheet(f"font-size: 13px; color: {_MUTED};")
+        hdr.setStyleSheet(f"font-size: 15px; color: {_MUTED};")
         hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(hdr)
         val = QLabel(value)
-        val.setStyleSheet("font-size: 22px; font-weight: bold;")
+        val.setStyleSheet("font-size: 24px; font-weight: bold;")
         val.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(val)
         layout.addWidget(frame, stretch=1)
@@ -1329,6 +1329,15 @@ class LoggerTab(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class HistoryTab(QWidget):
+    # column indices in sessions table
+    _COL_DATE    = 0
+    _COL_GAME    = 1
+    _COL_VEHICLE = 2
+    _COL_TRACK   = 3
+    _COL_LAPS    = 4
+    _COL_BEST    = 5
+    _COL_AVG     = 6
+
     def __init__(self, logger: TelemetryLogger) -> None:
         super().__init__()
         self._logger = logger
@@ -1355,21 +1364,32 @@ class HistoryTab(QWidget):
         hdr_h = QHBoxLayout(hdr_w)
         hdr_h.setContentsMargins(0, 0, 0, 0)
         lbl = QLabel("SESSIONS")
-        lbl.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {_MUTED};")
+        lbl.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
         hdr_h.addWidget(lbl)
         hdr_h.addStretch()
+        self._delete_btn = QPushButton("Delete Session")
+        self._delete_btn.setFixedWidth(120)
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._delete_selected)
+        hdr_h.addWidget(self._delete_btn)
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setFixedWidth(80)
         refresh_btn.clicked.connect(self.refresh)
         hdr_h.addWidget(refresh_btn)
         top_v.addWidget(hdr_w)
 
-        self._sessions_tbl = QTableWidget(0, 5)
-        self._sessions_tbl.setHorizontalHeaderLabels(["Date", "Game", "Laps", "Best", "Avg"])
-        self._sessions_tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._sessions_tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in (2, 3, 4):
-            self._sessions_tbl.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self._sessions_tbl = QTableWidget(0, 7)
+        self._sessions_tbl.setHorizontalHeaderLabels(
+            ["Date", "Game", "Vehicle", "Track", "Laps", "Best", "Avg"]
+        )
+        hdr = self._sessions_tbl.horizontalHeader()
+        hdr.setSectionResizeMode(self._COL_DATE,    QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(self._COL_GAME,    QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(self._COL_VEHICLE, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(self._COL_TRACK,   QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(self._COL_LAPS,    QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(self._COL_BEST,    QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(self._COL_AVG,     QHeaderView.ResizeMode.ResizeToContents)
         self._sessions_tbl.verticalHeader().setVisible(False)
         self._sessions_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._sessions_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -1386,7 +1406,7 @@ class HistoryTab(QWidget):
         bot_v.setSpacing(4)
 
         self._laps_hdr = QLabel("LAPS")
-        self._laps_hdr.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {_MUTED};")
+        self._laps_hdr.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
         bot_v.addWidget(self._laps_hdr)
 
         self._laps_tbl = QTableWidget(0, 3)
@@ -1401,11 +1421,11 @@ class HistoryTab(QWidget):
         bot_v.addWidget(self._laps_tbl)
 
         self._laps_summary = QLabel("")
-        self._laps_summary.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        self._laps_summary.setStyleSheet(f"color: {_MUTED}; font-size: 16px;")
         bot_v.addWidget(self._laps_summary)
         splitter.addWidget(bot_w)
 
-        splitter.setSizes([200, 300])
+        splitter.setSizes([220, 320])
         root.addWidget(splitter)
 
     # ── data ──────────────────────────────────────────────────────────────────
@@ -1416,20 +1436,52 @@ class HistoryTab(QWidget):
 
         rows = self._logger.session_history()
         self._sessions_tbl.setRowCount(len(rows))
-        for r, (sid, started, game, lap_count, best_ms, avg_ms) in enumerate(rows):
+        for r, (sid, started, game, vehicle, track, lap_count, best_ms, avg_ms) in enumerate(rows):
             date_str = started[:16].replace("T", "  ") if started else "—"
-            values   = [date_str, game or "—", str(lap_count or 0),
-                        _fmt_time(best_ms or 0), _fmt_time(avg_ms or 0)]
+            values   = [
+                date_str,
+                game    or "—",
+                vehicle or "—",
+                track   or "—",
+                str(lap_count or 0),
+                _fmt_time(best_ms or 0),
+                _fmt_time(avg_ms  or 0),
+            ]
             for c, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(_Qt.AlignmentFlag.AlignCenter)
-                if c == 0:
+                if c == self._COL_DATE:
                     item.setData(_Qt.ItemDataRole.UserRole, sid)
                 self._sessions_tbl.setItem(r, c, item)
 
+        self._delete_btn.setEnabled(False)
         self._laps_tbl.setRowCount(0)
         self._laps_hdr.setText("LAPS")
         self._laps_summary.setText("Select a session above to see its laps.")
+
+    def _delete_selected(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt as _Qt
+
+        sel = self._sessions_tbl.selectedItems()
+        if not sel:
+            return
+        row  = sel[0].row()
+        sid  = self._sessions_tbl.item(row, self._COL_DATE).data(_Qt.ItemDataRole.UserRole)
+        date = self._sessions_tbl.item(row, self._COL_DATE).text()
+        game = self._sessions_tbl.item(row, self._COL_GAME).text()
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Session",
+            f"Delete session from {date} ({game}) and all its laps?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._logger.delete_session(sid)
+        self.refresh()
 
     def _on_session_selected(self) -> None:
         from PySide6.QtWidgets import QTableWidgetItem
@@ -1437,16 +1489,23 @@ class HistoryTab(QWidget):
 
         sel = self._sessions_tbl.selectedItems()
         if not sel:
+            self._delete_btn.setEnabled(False)
             return
-        row     = sel[0].row()
-        sid     = self._sessions_tbl.item(row, 0).data(_Qt.ItemDataRole.UserRole)
-        game    = self._sessions_tbl.item(row, 1).text()
-        n_laps  = self._sessions_tbl.item(row, 2).text()
-        best    = self._sessions_tbl.item(row, 3).text()
-        date    = self._sessions_tbl.item(row, 0).text()
+        self._delete_btn.setEnabled(True)
 
+        row     = sel[0].row()
+        sid     = self._sessions_tbl.item(row, self._COL_DATE).data(_Qt.ItemDataRole.UserRole)
+        game    = self._sessions_tbl.item(row, self._COL_GAME).text()
+        vehicle = self._sessions_tbl.item(row, self._COL_VEHICLE).text()
+        track   = self._sessions_tbl.item(row, self._COL_TRACK).text()
+        n_laps  = self._sessions_tbl.item(row, self._COL_LAPS).text()
+        best    = self._sessions_tbl.item(row, self._COL_BEST).text()
+        date    = self._sessions_tbl.item(row, self._COL_DATE).text()
+
+        parts = [p for p in [game, vehicle, track] if p and p != "—"]
+        meta  = "  ·  ".join(parts) if parts else "—"
         self._laps_hdr.setText(
-            f"LAPS  ·  {game}  ·  {date}  ·  {n_laps} laps  ·  Best {best}"
+            f"LAPS  ·  {date}  ·  {meta}  ·  {n_laps} laps  ·  Best {best}"
         )
 
         laps        = self._logger.session_laps(sid)
@@ -1501,8 +1560,8 @@ class SimDeckApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("SimDeck")
         self.setWindowIcon(_make_window_icon())
-        self.resize(640, 660)
-        self.setMinimumSize(580, 560)
+        self.resize(860, 740)
+        self.setMinimumSize(760, 620)
 
         self._ui       = _UISignal()
         settings       = settings_manager.load()
