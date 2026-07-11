@@ -25,20 +25,20 @@ SIMHUB_IDLE_TIMEOUT = 5.0   # seconds without a property update before going idl
 # ---------------------------------------------------------------------------
 LIFX_LIGHTS = {
     "strip": {
-        "ip": "192.168.30.126",
+        "ip": "192.168.X.X",               # replace with your LIFX strip IP
     },
     # Downlights — named from the doorway perspective (door is to the left when sitting)
     "front_right": {                        # ceiling, directly left of the desk when sitting
-        "ip": "192.168.30.146",             # LIFX-DLCOL-779063
+        "ip": "192.168.X.X",               # replace with your light IP
     },
     "front_left": {                         # slightly behind and to the right when sitting
-        "ip": "192.168.30.53",              # LIFX-DLCOL-764149
+        "ip": "192.168.X.X",               # replace with your light IP
     },
     "rear_left": {                          # rear of the room, left from doorway
-        "ip": "192.168.30.73",              # LIFX-DLCOL-76FA28
+        "ip": "192.168.X.X",               # replace with your light IP
     },
     "rear_right": {                         # rear of the room, right from doorway
-        "ip": "192.168.30.214",             # LIFX-DLCOL-76F1C1
+        "ip": "192.168.X.X",               # replace with your light IP
     },
 }
 
@@ -87,3 +87,12 @@ FLAG_MAX_BRIGHTNESS   = 1.0
 PIT_LIMITER_LIGHTS      = ["strip"]     # "strip", ceiling lights, or both
 PIT_LIMITER_BRIGHTNESS  = 0.75
 PIT_LIMITER_FLASH_INTERVAL = 0.25      # seconds per flash half-cycle
+
+# ---------------------------------------------------------------------------
+# Local overrides (config_local.py is gitignored — put your real IPs there)
+# Any variable defined in config_local.py replaces the value set above.
+# ---------------------------------------------------------------------------
+try:
+    from config_local import *  # noqa: F401, F403
+except ImportError:
+    pass
