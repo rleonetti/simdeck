@@ -6,7 +6,7 @@
 
 2. **Rebuild the exe:**
    ```
-   pyinstaller --noconfirm --windowed --name SimDeck --icon simdeck.ico --hidden-import PySide6.QtCore --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtGui --hidden-import pystray._win32 --hidden-import psutil --hidden-import lifxlan --hidden-import bitstring.bitstore_bitarray --hidden-import bitstring.bitstore_bitarray_helpers --hidden-import bitstring.bitstore_common_helpers --hidden-import bitstring.bitstore_tibs --hidden-import bitstring.bitstore_tibs_helpers --hidden-import bitstring.array_ --hidden-import bitstring.bitarray_ --hidden-import bitstring.luts --hidden-import bitstring.mxfp simdeck.py
+   pyinstaller --noconfirm --windowed --name SimDeck --icon simdeck.ico --hidden-import PySide6.QtCore --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtGui --hidden-import pystray._win32 --hidden-import psutil --hidden-import lifxlan --hidden-import bitstring.bitstore_bitarray --hidden-import bitstring.bitstore_bitarray_helpers --hidden-import bitstring.bitstore_common_helpers --hidden-import bitstring.bitstore_tibs --hidden-import bitstring.bitstore_tibs_helpers --hidden-import bitstring.array_ --hidden-import bitstring.bitarray_ --hidden-import bitstring.luts --hidden-import bitstring.mxfp --collect-data setuptools simdeck.py
    ```
    Then copy assets into dist:
    ```
