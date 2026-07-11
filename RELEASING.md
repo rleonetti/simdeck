@@ -6,12 +6,13 @@
 
 2. **Rebuild the exe:**
    ```
-   pyinstaller --noconfirm --windowed --name SimDeck --icon simdeck.ico --hidden-import PySide6.QtCore --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtGui --hidden-import pystray._win32 --hidden-import psutil --hidden-import lifxlan --hidden-import bitstring.bitstore_bitarray --hidden-import bitstring.bitstore_bitarray_helpers --hidden-import bitstring.bitstore_common_helpers --hidden-import bitstring.bitstore_tibs --hidden-import bitstring.bitstore_tibs_helpers --hidden-import bitstring.array_ --hidden-import bitstring.bitarray_ --hidden-import bitstring.luts --hidden-import bitstring.mxfp --collect-data setuptools simdeck.py
+   pyinstaller --noconfirm SimDeck.spec
    ```
    Then copy assets into dist:
    ```
    copy simdeck.ico dist\SimDeck\simdeck.ico
    copy simdeck_button.png dist\SimDeck\simdeck_button.png
+   copy simdeck_button@2x.png dist\SimDeck\simdeck_button@2x.png
    ```
 
 3. **Build the installer:**

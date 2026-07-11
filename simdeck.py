@@ -1228,6 +1228,23 @@ class SimDeckApp(QMainWindow):
             self._update_version = latest
             self._ui.call.emit(lambda: self._tray.update_menu())
 
+    def _manual_update_check(self) -> None:
+        def _worker() -> None:
+            latest = _check_for_update()
+            if latest:
+                self._update_version = latest
+                self._ui.call.emit(lambda: self._tray.update_menu())
+                try:
+                    self._tray.notify(f"Update available: v{latest} — click tray menu to download.", "SimDeck")
+                except Exception:
+                    pass
+            else:
+                try:
+                    self._tray.notify(f"SimDeck v{__version__} is up to date.", "SimDeck")
+                except Exception:
+                    pass
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _setup_tray(self) -> None:
         menu = pystray.Menu(
             pystray.MenuItem("Open", lambda *_: self._ui.call.emit(self._restore), default=True),
@@ -1237,6 +1254,7 @@ class SimDeckApp(QMainWindow):
                 lambda *_: webbrowser.open(_RELEASES_PAGE),
                 visible=lambda item: self._update_version is not None,
             ),
+            pystray.MenuItem("Check for Update", lambda *_: self._manual_update_check()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart Effects", lambda *_: self._ui.call.emit(self._force_restart)),
             pystray.Menu.SEPARATOR,
