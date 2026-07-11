@@ -23,7 +23,25 @@ PROPERTIES = {
     "dcp.gd.Flag_Black":        "flag_black",
     # Pit limiter
     "dcp.gd.PitLimiterActive":  "pit_limiter",
+    # Lap timing (timespans arrive as "HH:MM:SS.fff", parsed to seconds)
+    "dcp.gd.CurrentLap":        "current_lap",
+    "dcp.gd.CurrentLapTime":    "current_lap_time",
+    "dcp.gd.LastLapTime":       "last_lap_time",
+    "dcp.gd.BestLapTime":       "best_lap_time",
 }
+
+
+def _parse_timespan(s: str) -> float:
+    """Parse SimHub timespan strings (HH:MM:SS.fff or MM:SS.fff) to seconds."""
+    parts = s.split(":")
+    try:
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        return float(s)
+    except ValueError:
+        return 0.0
 
 
 class SimHubClient:
@@ -124,7 +142,12 @@ class SimHubClient:
         if value_str == "(null)":
             return
         try:
-            value: float | str = float(value_str) if type_str in ("double", "integer") else value_str
+            if type_str in ("double", "integer"):
+                value: float | str = float(value_str)
+            elif type_str == "timespan":
+                value = _parse_timespan(value_str)
+            else:
+                value = value_str
         except ValueError:
             return
         with self._lock:
