@@ -28,6 +28,8 @@ PROPERTIES = {
     "dcp.gd.CurrentLapTime":    "current_lap_time",
     "dcp.gd.LastLapTime":       "last_lap_time",
     "dcp.gd.BestLapTime":       "best_lap_time",
+    # Lap validity (0 = invalid / track limits, 1 = valid; absent = assume valid)
+    "dcp.gd.IsLapValid":        "is_lap_valid",
 }
 
 

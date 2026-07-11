@@ -1109,9 +1109,10 @@ class SplitterTab(QWidget):
 class LoggerTab(QWidget):
     def __init__(self, logger: TelemetryLogger, ui: _UISignal) -> None:
         super().__init__()
-        self._logger     = logger
-        self._ui         = ui
+        self._logger          = logger
+        self._ui              = ui
         self._game: str | None = None
+        self._was_connected   = False
         self._build()
         logger.on_lap_recorded = lambda: self._ui.call.emit(self._refresh_lap_table)
 
@@ -1138,6 +1139,9 @@ class LoggerTab(QWidget):
         self._game_lbl.setStyleSheet(f"color: {_MUTED};")
         bar_h.addWidget(self._game_lbl)
         bar_h.addStretch()
+        self._auto_cb = QCheckBox("Auto Record")
+        self._auto_cb.stateChanged.connect(self._on_auto_changed)
+        bar_h.addWidget(self._auto_cb)
         self._toggle_btn = QPushButton("Start Recording")
         self._toggle_btn.setFixedWidth(140)
         self._toggle_btn.clicked.connect(self._toggle)
@@ -1149,10 +1153,10 @@ class LoggerTab(QWidget):
         stats_h = QHBoxLayout(stats_w)
         stats_h.setContentsMargins(0, 0, 0, 0)
         stats_h.setSpacing(8)
-        self._stat_lap  = self._stat_box(stats_h, "LAP",     "—")
-        self._stat_cur  = self._stat_box(stats_h, "CURRENT", "—")
-        self._stat_last = self._stat_box(stats_h, "LAST",    "—")
-        self._stat_best = self._stat_box(stats_h, "BEST",    "—")
+        self._stat_lap  = self._stat_box(stats_h, "LAP",      "—")
+        self._stat_cur  = self._stat_box(stats_h, "CURRENT",  "—")
+        self._stat_last = self._stat_box(stats_h, "LAST",     "—")
+        self._stat_best, self._stat_best_hdr = self._stat_box(stats_h, "FAST LAP", "—", return_hdr=True)
         root.addWidget(stats_w)
 
         # Lap table header label
@@ -1166,21 +1170,13 @@ class LoggerTab(QWidget):
         self._lap_table = self._make_lap_table()
         root.addWidget(self._lap_table, stretch=1)
 
-        # Footer: summary + history button
-        foot_w = QWidget()
-        foot_h = QHBoxLayout(foot_w)
-        foot_h.setContentsMargins(0, 0, 0, 0)
+        # Footer: summary
         self._summary_lbl = QLabel("")
         self._summary_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
-        foot_h.addWidget(self._summary_lbl)
-        foot_h.addStretch()
-        hist_btn = QPushButton("Session History…")
-        hist_btn.setFixedWidth(140)
-        hist_btn.clicked.connect(self._show_history)
-        foot_h.addWidget(hist_btn)
-        root.addWidget(foot_w)
+        root.addWidget(self._summary_lbl)
 
-    def _stat_box(self, layout: QHBoxLayout, label: str, value: str) -> QLabel:
+    def _stat_box(self, layout: QHBoxLayout, label: str, value: str,
+                  return_hdr: bool = False) -> "QLabel | tuple[QLabel, QLabel]":
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
         v = QVBoxLayout(frame)
@@ -1195,7 +1191,7 @@ class LoggerTab(QWidget):
         val.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(val)
         layout.addWidget(frame, stretch=1)
-        return val
+        return (val, hdr) if return_hdr else val
 
     def _make_lap_table(self) -> "QTableWidget":
         from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
@@ -1211,66 +1207,90 @@ class LoggerTab(QWidget):
         tbl.setAlternatingRowColors(True)
         return tbl
 
+    # ── auto record ───────────────────────────────────────────────────────────
+
+    def _on_auto_changed(self) -> None:
+        # If the user enables auto-record while SimHub is already live, start immediately.
+        if self._auto_cb.isChecked() and self._was_connected and not self._logger.recording:
+            self._start_recording()
+
     # ── toggle recording ──────────────────────────────────────────────────────
+
+    def _start_recording(self) -> None:
+        self._logger.start_session(game=self._game)
+        self._rec_dot.setStyleSheet(f"color: #e74c3c; font-size: 20px;")
+        self._rec_lbl.setText("Recording")
+        self._rec_lbl.setStyleSheet("color: #e74c3c;")
+        self._toggle_btn.setText("Stop Recording")
+        self._refresh_lap_table()
+
+    def _stop_recording(self) -> None:
+        self._logger.stop_session()
+        self._rec_dot.setStyleSheet(f"color: {_GREY}; font-size: 20px;")
+        self._rec_lbl.setText("Not recording")
+        self._rec_lbl.setStyleSheet(f"color: {_MUTED};")
+        self._toggle_btn.setText("Start Recording")
 
     def _toggle(self) -> None:
         if self._logger.recording:
-            self._logger.stop_session()
-            self._rec_dot.setStyleSheet(f"color: {_GREY}; font-size: 20px;")
-            self._rec_lbl.setText("Not recording")
-            self._rec_lbl.setStyleSheet(f"color: {_MUTED};")
-            self._toggle_btn.setText("Start Recording")
+            self._stop_recording()
         else:
-            self._logger.start_session(game=self._game)
-            self._rec_dot.setStyleSheet(f"color: #e74c3c; font-size: 20px;")
-            self._rec_lbl.setText("Recording")
-            self._rec_lbl.setStyleSheet("color: #e74c3c;")
-            self._toggle_btn.setText("Stop Recording")
-            self._refresh_lap_table()
+            self._start_recording()
 
     # ── refresh ───────────────────────────────────────────────────────────────
 
     def _refresh_lap_table(self) -> None:
         from PySide6.QtWidgets import QTableWidgetItem
         from PySide6.QtCore import Qt as _Qt
-        laps = self._logger.current_session_laps()
-        best_ms = min((ms for _, ms in laps), default=0)
-        avg_ms  = int(sum(ms for _, ms in laps) / len(laps)) if laps else 0
+        laps = self._logger.current_session_laps()   # [(lap_num, ms, valid), ...]
+
+        valid_times = [ms for _, ms, v in laps if v]
+        best_ms = min(valid_times, default=0)
+        avg_ms  = int(sum(valid_times) / len(valid_times)) if valid_times else 0
 
         self._lap_table.setRowCount(len(laps))
-        for row, (lap_num, lap_ms) in enumerate(laps):
-            is_best = (lap_ms == best_ms and best_ms > 0)
-            delta   = lap_ms - best_ms if best_ms > 0 else 0
+        for row, (lap_num, lap_ms, valid) in enumerate(laps):
+            is_best = valid and lap_ms == best_ms and best_ms > 0
+            if not valid:
+                delta_text = "INVALID"
+            elif is_best:
+                delta_text = "—"
+            else:
+                delta_text = _fmt_delta(lap_ms - best_ms)
 
             items = [
                 QTableWidgetItem(str(lap_num)),
                 QTableWidgetItem(_fmt_time(lap_ms)),
-                QTableWidgetItem("—" if is_best else _fmt_delta(delta)),
+                QTableWidgetItem(delta_text),
             ]
             for col, item in enumerate(items):
                 item.setTextAlignment(_Qt.AlignmentFlag.AlignCenter)
-                if is_best:
+                if not valid:
+                    item.setForeground(QColor(_MUTED))
+                elif is_best:
                     item.setForeground(QColor(_GREEN))
                 self._lap_table.setItem(row, col, item)
 
         self._lap_table.scrollToBottom()
 
         if laps:
+            import statistics
             consistency = ""
-            if len(laps) >= 2:
-                import statistics
-                stdev_s = statistics.stdev(ms for _, ms in laps) / 1000.0
+            if len(valid_times) >= 2:
+                stdev_s = statistics.stdev(valid_times) / 1000.0
                 consistency = f"  ·  Consistency ±{stdev_s:.2f}s"
+            invalid_count = sum(1 for _, _, v in laps if not v)
+            invalid_note  = f"  ·  {invalid_count} invalid" if invalid_count else ""
             self._summary_lbl.setText(
                 f"{len(laps)} lap{'s' if len(laps) != 1 else ''}  ·  "
-                f"Avg {_fmt_time(avg_ms)}{consistency}"
+                f"Avg {_fmt_time(avg_ms)}{consistency}{invalid_note}"
             )
         else:
             self._summary_lbl.setText("")
 
     # ── poll ──────────────────────────────────────────────────────────────────
 
-    def poll(self, telemetry: dict, game: str | None) -> None:
+    def poll(self, telemetry: dict, simhub_status: str, game: str | None) -> None:
         self._game = game
 
         if game:
@@ -1278,65 +1298,198 @@ class LoggerTab(QWidget):
         else:
             self._game_lbl.setText("")
 
+        # Auto-record: start when SimHub connects, stop when it drops
+        is_connected = simhub_status == "connected"
+        if self._auto_cb.isChecked():
+            if is_connected and not self._was_connected and not self._logger.recording:
+                self._start_recording()
+            elif not is_connected and self._was_connected and self._logger.recording:
+                self._stop_recording()
+        self._was_connected = is_connected
+
         if not telemetry:
             return
 
-        cur_lap  = telemetry.get("current_lap")
-        cur_time = telemetry.get("current_lap_time", 0.0)
-        last_t   = telemetry.get("last_lap_time",    0.0)
-        best_t   = telemetry.get("best_lap_time",    0.0)
+        cur_lap     = telemetry.get("current_lap")
+        cur_time    = telemetry.get("current_lap_time", 0.0)
+        last_t      = telemetry.get("last_lap_time",    0.0)
+        best_t      = telemetry.get("best_lap_time",    0.0)
+        checkered   = telemetry.get("flag_checkered",   0.0)
 
         if cur_lap is not None:
             self._stat_lap.setText(str(int(cur_lap)))
         self._stat_cur.setText(_fmt_time(int(cur_time * 1000)) if cur_time else "—")
         self._stat_last.setText(_fmt_time(int(last_t * 1000))  if last_t  else "—")
         self._stat_best.setText(_fmt_time(int(best_t * 1000))  if best_t  else "—")
+        self._stat_best_hdr.setText("BEST LAP" if checkered else "FAST LAP")
 
-    # ── history dialog ────────────────────────────────────────────────────────
 
-    def _show_history(self) -> None:
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
-            QHeaderView, QDialogButtonBox,
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# History tab
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HistoryTab(QWidget):
+    def __init__(self, logger: TelemetryLogger) -> None:
+        super().__init__()
+        self._logger = logger
+        self._build()
+
+    def _build(self) -> None:
+        from PySide6.QtWidgets import QTableWidget, QHeaderView, QSplitter
         from PySide6.QtCore import Qt as _Qt
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Session History")
-        dlg.setMinimumSize(600, 400)
-        v = QVBoxLayout(dlg)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(6)
+
+        splitter = QSplitter(_Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+
+        # ── Top: sessions ──────────────────────────────────────────────────
+        top_w = QWidget()
+        top_v = QVBoxLayout(top_w)
+        top_v.setContentsMargins(0, 0, 0, 0)
+        top_v.setSpacing(4)
+
+        hdr_w = QWidget()
+        hdr_h = QHBoxLayout(hdr_w)
+        hdr_h.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel("SESSIONS")
+        lbl.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {_MUTED};")
+        hdr_h.addWidget(lbl)
+        hdr_h.addStretch()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setFixedWidth(80)
+        refresh_btn.clicked.connect(self.refresh)
+        hdr_h.addWidget(refresh_btn)
+        top_v.addWidget(hdr_w)
+
+        self._sessions_tbl = QTableWidget(0, 5)
+        self._sessions_tbl.setHorizontalHeaderLabels(["Date", "Game", "Laps", "Best", "Avg"])
+        self._sessions_tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._sessions_tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for col in (2, 3, 4):
+            self._sessions_tbl.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self._sessions_tbl.verticalHeader().setVisible(False)
+        self._sessions_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._sessions_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._sessions_tbl.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._sessions_tbl.setAlternatingRowColors(True)
+        self._sessions_tbl.itemSelectionChanged.connect(self._on_session_selected)
+        top_v.addWidget(self._sessions_tbl)
+        splitter.addWidget(top_w)
+
+        # ── Bottom: laps for selected session ─────────────────────────────
+        bot_w = QWidget()
+        bot_v = QVBoxLayout(bot_w)
+        bot_v.setContentsMargins(0, 0, 0, 0)
+        bot_v.setSpacing(4)
+
+        self._laps_hdr = QLabel("LAPS")
+        self._laps_hdr.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {_MUTED};")
+        bot_v.addWidget(self._laps_hdr)
+
+        self._laps_tbl = QTableWidget(0, 3)
+        self._laps_tbl.setHorizontalHeaderLabels(["Lap", "Time", "Δ Best"])
+        self._laps_tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._laps_tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._laps_tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._laps_tbl.verticalHeader().setVisible(False)
+        self._laps_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._laps_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._laps_tbl.setAlternatingRowColors(True)
+        bot_v.addWidget(self._laps_tbl)
+
+        self._laps_summary = QLabel("")
+        self._laps_summary.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        bot_v.addWidget(self._laps_summary)
+        splitter.addWidget(bot_w)
+
+        splitter.setSizes([200, 300])
+        root.addWidget(splitter)
+
+    # ── data ──────────────────────────────────────────────────────────────────
+
+    def refresh(self) -> None:
+        from PySide6.QtWidgets import QTableWidgetItem
+        from PySide6.QtCore import Qt as _Qt
 
         rows = self._logger.session_history()
-
-        tbl = QTableWidget(len(rows), 5)
-        tbl.setHorizontalHeaderLabels(["Date", "Game", "Laps", "Best", "Avg"])
-        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in (2, 3, 4):
-            tbl.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        tbl.verticalHeader().setVisible(False)
-        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        tbl.setAlternatingRowColors(True)
-
+        self._sessions_tbl.setRowCount(len(rows))
         for r, (sid, started, game, lap_count, best_ms, avg_ms) in enumerate(rows):
             date_str = started[:16].replace("T", "  ") if started else "—"
-            cells = [
-                date_str,
-                game or "—",
-                str(lap_count or 0),
-                _fmt_time(best_ms or 0),
-                _fmt_time(avg_ms  or 0),
-            ]
-            for c, text in enumerate(cells):
+            values   = [date_str, game or "—", str(lap_count or 0),
+                        _fmt_time(best_ms or 0), _fmt_time(avg_ms or 0)]
+            for c, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(_Qt.AlignmentFlag.AlignCenter)
-                tbl.setItem(r, c, item)
+                if c == 0:
+                    item.setData(_Qt.ItemDataRole.UserRole, sid)
+                self._sessions_tbl.setItem(r, c, item)
 
-        v.addWidget(tbl)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        btns.rejected.connect(dlg.reject)
-        v.addWidget(btns)
-        dlg.exec()
+        self._laps_tbl.setRowCount(0)
+        self._laps_hdr.setText("LAPS")
+        self._laps_summary.setText("Select a session above to see its laps.")
+
+    def _on_session_selected(self) -> None:
+        from PySide6.QtWidgets import QTableWidgetItem
+        from PySide6.QtCore import Qt as _Qt
+
+        sel = self._sessions_tbl.selectedItems()
+        if not sel:
+            return
+        row     = sel[0].row()
+        sid     = self._sessions_tbl.item(row, 0).data(_Qt.ItemDataRole.UserRole)
+        game    = self._sessions_tbl.item(row, 1).text()
+        n_laps  = self._sessions_tbl.item(row, 2).text()
+        best    = self._sessions_tbl.item(row, 3).text()
+        date    = self._sessions_tbl.item(row, 0).text()
+
+        self._laps_hdr.setText(
+            f"LAPS  ·  {game}  ·  {date}  ·  {n_laps} laps  ·  Best {best}"
+        )
+
+        laps        = self._logger.session_laps(sid)
+        valid_times = [ms for _, ms, v in laps if v]
+        best_ms     = min(valid_times, default=0)
+
+        self._laps_tbl.setRowCount(len(laps))
+        for r, (lap_num, lap_ms, valid) in enumerate(laps):
+            is_best    = valid and lap_ms == best_ms and best_ms > 0
+            if not valid:
+                delta_text = "INVALID"
+            elif is_best:
+                delta_text = "—"
+            else:
+                delta_text = _fmt_delta(lap_ms - best_ms)
+
+            items = [
+                QTableWidgetItem(str(lap_num)),
+                QTableWidgetItem(_fmt_time(lap_ms)),
+                QTableWidgetItem(delta_text),
+            ]
+            for c, item in enumerate(items):
+                item.setTextAlignment(_Qt.AlignmentFlag.AlignCenter)
+                if not valid:
+                    item.setForeground(QColor(_MUTED))
+                elif is_best:
+                    item.setForeground(QColor(_GREEN))
+                self._laps_tbl.setItem(r, c, item)
+
+        if laps:
+            import statistics
+            consistency = ""
+            if len(valid_times) >= 2:
+                stdev_s     = statistics.stdev(valid_times) / 1000.0
+                consistency = f"  ·  Consistency ±{stdev_s:.2f}s"
+            invalid_count = sum(1 for _, _, v in laps if not v)
+            invalid_note  = f"  ·  {invalid_count} invalid" if invalid_count else ""
+            avg_ms        = int(sum(valid_times) / len(valid_times)) if valid_times else 0
+            self._laps_summary.setText(
+                f"Avg {_fmt_time(avg_ms)}{consistency}{invalid_note}"
+            )
+        else:
+            self._laps_summary.setText("No laps recorded in this session.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1369,8 +1522,11 @@ class SimDeckApp(QMainWindow):
         main_v.setContentsMargins(10, 10, 10, 0)
         main_v.setSpacing(0)
 
-        tabs = QTabWidget()
-        main_v.addWidget(tabs, stretch=1)
+        main_tabs = QTabWidget()
+        main_v.addWidget(main_tabs, stretch=1)
+
+        # ── Light Control ──────────────────────────────────────────────────
+        light_tabs = QTabWidget()
 
         self._lifx_tab = LIFXTab(
             engine=self._engine,
@@ -1379,16 +1535,33 @@ class SimDeckApp(QMainWindow):
             on_force_restart=self._force_restart,
             ui=self._ui,
         )
-        tabs.addTab(self._lifx_tab, "LIFX Effects")
+        light_tabs.addTab(self._lifx_tab, "LIFX Effects")
 
         self._splitter_tab = SplitterTab(self._splitter, settings, self._save_settings)
-        tabs.addTab(self._splitter_tab, "UDP Splitter")
+        light_tabs.addTab(self._splitter_tab, "UDP Splitter")
 
         self._test_tab = TestTab(self._engine, self._lifx_tab.get_effect_kwargs, self._ui)
-        tabs.addTab(self._test_tab, "Test")
+        light_tabs.addTab(self._test_tab, "Test")
+
+        main_tabs.addTab(light_tabs, "Light Control")
+
+        # ── Lap Logs ───────────────────────────────────────────────────────
+        lap_tabs = QTabWidget()
 
         self._logger_tab = LoggerTab(self._logger, self._ui)
-        tabs.addTab(self._logger_tab, "Lap Logger")
+        lap_tabs.addTab(self._logger_tab, "Logger")
+
+        self._history_tab = HistoryTab(self._logger)
+        lap_tabs.addTab(self._history_tab, "History")
+
+        main_tabs.addTab(lap_tabs, "Lap Logs")
+
+        # Refresh history when the user switches to the Lap Logs main tab
+        def _on_main_tab_changed(idx: int) -> None:
+            if main_tabs.tabText(idx) == "Lap Logs":
+                self._history_tab.refresh()
+
+        main_tabs.currentChanged.connect(_on_main_tab_changed)
 
 
         # Debounce timer
@@ -1460,7 +1633,11 @@ class SimDeckApp(QMainWindow):
         self._lifx_tab.poll(status, telemetry)
         self._splitter_tab.poll()
         self._logger.feed(telemetry)
-        self._logger_tab.poll(telemetry, self._last_game_exe and _EXE_TO_NAME.get(self._last_game_exe))
+        self._logger_tab.poll(
+            telemetry,
+            status["simhub"],
+            self._last_game_exe and _EXE_TO_NAME.get(self._last_game_exe),
+        )
 
         sh = status["simhub"]
         if sh != self._last_tray_status and self._tray:

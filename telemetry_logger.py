@@ -23,10 +23,15 @@ CREATE TABLE IF NOT EXISTS laps (
     session_id  INTEGER NOT NULL REFERENCES sessions(id),
     lap_number  INTEGER,
     lap_time_ms INTEGER NOT NULL,
+    valid       INTEGER NOT NULL DEFAULT 1,
     recorded_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS laps_session ON laps(session_id);
 """
+
+_MIGRATIONS = [
+    "ALTER TABLE laps ADD COLUMN valid INTEGER NOT NULL DEFAULT 1",
+]
 
 _MIN_VALID_LAP_MS = 10_000   # ignore sub-10-second "laps" (outlap artefacts)
 
@@ -43,11 +48,21 @@ class TelemetryLogger:
         self._conn = sqlite3.connect(str(_DB), check_same_thread=False)
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
-        self._lock     = threading.Lock()
+        self._run_migrations()
+        self._lock              = threading.Lock()
         self._session_id: int | None = None
         self._prev_lap: float | None = None
         self._prev_last_ms: int | None = None
+        self._lap_ever_invalid  = False   # True if IsLapValid was 0 at any point this lap
         self.on_lap_recorded: Callable[[], None] | None = None
+
+    def _run_migrations(self) -> None:
+        for sql in _MIGRATIONS:
+            try:
+                self._conn.execute(sql)
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -76,49 +91,68 @@ class TelemetryLogger:
         """Call with the latest telemetry dict. Detects and stores lap completions."""
         if self._session_id is None:
             return
-        cur_lap    = telemetry.get("current_lap")
-        last_secs  = telemetry.get("last_lap_time", 0.0)
+        cur_lap   = telemetry.get("current_lap")
+        last_secs = telemetry.get("last_lap_time", 0.0)
         if cur_lap is None:
             return
 
-        last_ms = _ms(last_secs) if last_secs else 0
+        last_ms   = _ms(last_secs) if last_secs else 0
+        is_valid  = bool(telemetry.get("is_lap_valid", 1))
 
-        prev_lap = self._prev_lap
+        # Accumulate: if validity ever drops during this lap, the whole lap is tainted.
+        if not is_valid:
+            self._lap_ever_invalid = True
+
+        # First feed after recording starts: backfill the most recently completed
+        # lap if one is already available (handles auto-record starting mid-session).
+        # We can't know its validity retroactively, so we assume valid.
+        if self._prev_lap is None:
+            self._prev_lap = cur_lap
+            if last_ms >= _MIN_VALID_LAP_MS:
+                lap_number = max(1, int(cur_lap) - 1)
+                self._prev_last_ms = last_ms
+                self._record_lap(lap_number, last_ms, valid=True)
+            return
+
+        prev_lap       = self._prev_lap
         self._prev_lap = cur_lap
 
-        # Lap completed: lap counter increased and we have a valid new time
+        # Normal lap detection: lap counter increased with a new valid time
         if (
-            prev_lap is not None
-            and cur_lap > prev_lap
+            cur_lap > prev_lap
             and last_ms >= _MIN_VALID_LAP_MS
             and last_ms != self._prev_last_ms
         ):
-            lap_number = int(prev_lap)
             self._prev_last_ms = last_ms
-            with self._lock:
-                self._conn.execute(
-                    "INSERT INTO laps (session_id, lap_number, lap_time_ms, recorded_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (self._session_id, lap_number, last_ms,
-                     datetime.now().isoformat(timespec="seconds")),
-                )
-                self._conn.commit()
-            if self.on_lap_recorded:
-                self.on_lap_recorded()
+            valid = not self._lap_ever_invalid
+            self._lap_ever_invalid = False   # reset for the new lap
+            self._record_lap(int(prev_lap), last_ms, valid=valid)
+
+    def _record_lap(self, lap_number: int, lap_ms: int, valid: bool = True) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO laps (session_id, lap_number, lap_time_ms, valid, recorded_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (self._session_id, lap_number, lap_ms, int(valid),
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+            self._conn.commit()
+        if self.on_lap_recorded:
+            self.on_lap_recorded()
 
     # ── queries ───────────────────────────────────────────────────────────────
 
-    def current_session_laps(self) -> list[tuple[int, int]]:
-        """Return [(lap_number, lap_time_ms), ...] for the current session."""
+    def current_session_laps(self) -> list[tuple[int, int, bool]]:
+        """Return [(lap_number, lap_time_ms, valid), ...] for the current session."""
         if self._session_id is None:
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT lap_number, lap_time_ms FROM laps"
+                "SELECT lap_number, lap_time_ms, valid FROM laps"
                 " WHERE session_id = ? ORDER BY lap_number",
                 (self._session_id,),
             ).fetchall()
-        return rows
+        return [(r[0], r[1], bool(r[2])) for r in rows]
 
     def session_history(self, limit: int = 50) -> list[tuple]:
         """Return summary rows for the most recent sessions.
@@ -141,11 +175,12 @@ class TelemetryLogger:
             ).fetchall()
         return rows
 
-    def session_laps(self, session_id: int) -> list[tuple[int, int]]:
-        """Return laps for any session by id."""
+    def session_laps(self, session_id: int) -> list[tuple[int, int, bool]]:
+        """Return [(lap_number, lap_time_ms, valid), ...] for any session by id."""
         with self._lock:
-            return self._conn.execute(
-                "SELECT lap_number, lap_time_ms FROM laps"
+            rows = self._conn.execute(
+                "SELECT lap_number, lap_time_ms, valid FROM laps"
                 " WHERE session_id = ? ORDER BY lap_number",
                 (session_id,),
             ).fetchall()
+        return [(r[0], r[1], bool(r[2])) for r in rows]
