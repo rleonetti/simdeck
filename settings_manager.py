@@ -32,6 +32,11 @@ DEFAULTS: dict = {
         {"ip": "127.0.0.1", "port": 20066, "label": "Moza Pit House", "enabled": True},
         {"ip": "127.0.0.1", "port": 8000,  "label": "SimHub",         "enabled": True},
     ],
+    # App-level settings
+    "font_size_pt":    10,
+    "start_minimized": False,
+    "simhub_host":     "127.0.0.1",
+    "simhub_port":     18082,
 }
 
 

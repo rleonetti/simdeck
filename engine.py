@@ -20,7 +20,9 @@ _DORMANT_AFTER        = 15.0     # seconds of inactivity before slowing down
 class Engine:
     """Runs LIFX effects driven by SimHub telemetry in a background thread."""
 
-    def __init__(self) -> None:
+    def __init__(self,
+                 simhub_host: str = config.SIMHUB_HOST,
+                 simhub_port: int = config.SIMHUB_PORT) -> None:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
@@ -28,6 +30,8 @@ class Engine:
         self._simhub_status = "disconnected"
         self._rig: LightRig | None = None
         self._last_telemetry: dict = {}
+        self._simhub_host = simhub_host
+        self._simhub_port = simhub_port
 
     # ------------------------------------------------------------------ public
 
@@ -82,6 +86,10 @@ class Engine:
         if self._rig and self._rig.get("strip"):
             self._rig.get("strip").set_idle()
         self._rig = None
+
+    def set_simhub_address(self, host: str, port: int) -> None:
+        self._simhub_host = host
+        self._simhub_port = port
 
     def restart(self, effect_kwargs: dict) -> None:
         """Full restart: releases rig and reconnects everything fresh."""
@@ -194,7 +202,7 @@ class Engine:
         if strip:
             strip.set_idle()
 
-        simhub = SimHubClient(host=config.SIMHUB_HOST, port=config.SIMHUB_PORT)
+        simhub = SimHubClient(host=self._simhub_host, port=self._simhub_port)
         simhub.start()
         with self._lock:
             self._simhub_status = "waiting"

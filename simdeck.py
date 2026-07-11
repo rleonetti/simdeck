@@ -87,6 +87,56 @@ _KNOWN_GAMES: list[dict[str, str]] = [
 
 _EXE_TO_NAME: dict[str, str] = {g["exe"]: g["name"] for g in _KNOWN_GAMES}
 
+# ── Windows registry helpers (launch at startup) ──────────────────────────────
+try:
+    import winreg as _winreg
+    _HAS_WINREG = True
+except ImportError:
+    _HAS_WINREG = False
+
+_STARTUP_REG_KEY  = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_STARTUP_REG_NAME = "SimDeck"
+
+
+def _get_startup_registry() -> bool:
+    if not _HAS_WINREG:
+        return False
+    try:
+        with _winreg.OpenKey(
+            _winreg.HKEY_CURRENT_USER, _STARTUP_REG_KEY, 0, _winreg.KEY_READ
+        ) as key:
+            val, _ = _winreg.QueryValueEx(key, _STARTUP_REG_NAME)
+            return sys.executable.lower() in val.lower()
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _set_startup_registry(enabled: bool) -> None:
+    if not _HAS_WINREG:
+        return
+    try:
+        with _winreg.OpenKey(
+            _winreg.HKEY_CURRENT_USER, _STARTUP_REG_KEY, 0, _winreg.KEY_SET_VALUE
+        ) as key:
+            if enabled:
+                _winreg.SetValueEx(key, _STARTUP_REG_NAME, 0,
+                                   _winreg.REG_SZ, f'"{sys.executable}"')
+            else:
+                try:
+                    _winreg.DeleteValue(key, _STARTUP_REG_NAME)
+                except FileNotFoundError:
+                    pass
+    except OSError:
+        pass
+
+
+def _apply_font_size(size_pt: int) -> None:
+    app = QApplication.instance()
+    if app:
+        font = app.font()
+        font.setPointSize(size_pt)
+        app.setFont(font)
+
 
 def _check_for_update() -> str | None:
     """Return the latest release tag (e.g. '1.2.0') if newer than __version__, else None."""
@@ -1552,6 +1602,214 @@ class HistoryTab(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Settings tab
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SettingsTab(QWidget):
+    def __init__(self,
+                 settings: dict,
+                 on_font_change: Callable[[int], None],
+                 on_check_update: Callable[[], None],
+                 on_startup_change: Callable[[bool, bool], None],
+                 on_simhub_change: Callable[[str, int], None]) -> None:
+        super().__init__()
+        self._on_font_change    = on_font_change
+        self._on_check_update   = on_check_update
+        self._on_startup_change = on_startup_change
+        self._on_simhub_change  = on_simhub_change
+        self._build(settings)
+
+    def _build(self, settings: dict) -> None:
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(28, 20, 28, 20)
+
+        content = QWidget()
+        content.setMaximumWidth(560)
+        cv = QVBoxLayout(content)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
+
+        # ── APPEARANCE ────────────────────────────────────────────────────────
+        cv.addWidget(self._section_hdr("APPEARANCE"))
+        cv.addSpacing(10)
+
+        font_row = QHBoxLayout()
+        font_row.setSpacing(10)
+        font_lbl = QLabel("Font size")
+        font_lbl.setFixedWidth(100)
+        font_row.addWidget(font_lbl)
+
+        self._font_slider = QSlider(Qt.Orientation.Horizontal)
+        self._font_slider.setRange(9, 14)
+        self._font_slider.setValue(settings.get("font_size_pt", 10))
+        self._font_slider.setFixedWidth(200)
+        self._font_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._font_slider.setTickInterval(1)
+        font_row.addWidget(self._font_slider)
+
+        self._font_val_lbl = QLabel(f"{self._font_slider.value()} pt")
+        self._font_val_lbl.setStyleSheet(f"color: {_MUTED};")
+        self._font_val_lbl.setFixedWidth(40)
+        font_row.addWidget(self._font_val_lbl)
+        font_row.addStretch()
+        cv.addLayout(font_row)
+
+        hint = QLabel("Affects table rows, buttons and tab labels.")
+        hint.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        cv.addSpacing(4)
+        cv.addWidget(hint)
+        self._font_slider.valueChanged.connect(self._on_font_slider)
+
+        # ── UPDATES ───────────────────────────────────────────────────────────
+        cv.addSpacing(28)
+        cv.addWidget(self._section_hdr("UPDATES"))
+        cv.addSpacing(10)
+
+        ver_lbl = QLabel(f"SimDeck  v{__version__}")
+        ver_lbl.setStyleSheet("font-size: 15px;")
+        cv.addWidget(ver_lbl)
+        cv.addSpacing(8)
+
+        update_row = QHBoxLayout()
+        update_row.setSpacing(12)
+        self._check_btn = QPushButton("Check for Update")
+        self._check_btn.setFixedWidth(160)
+        self._check_btn.clicked.connect(self._on_check_clicked)
+        update_row.addWidget(self._check_btn)
+
+        self._update_status_lbl = QLabel("")
+        self._update_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        update_row.addWidget(self._update_status_lbl)
+        update_row.addStretch()
+        cv.addLayout(update_row)
+        cv.addSpacing(6)
+
+        self._download_btn = QPushButton("Download")
+        self._download_btn.setFixedWidth(120)
+        self._download_btn.setVisible(False)
+        self._download_btn.clicked.connect(lambda: webbrowser.open(_RELEASES_PAGE))
+        cv.addWidget(self._download_btn)
+
+        # ── STARTUP ───────────────────────────────────────────────────────────
+        cv.addSpacing(28)
+        cv.addWidget(self._section_hdr("STARTUP"))
+        cv.addSpacing(10)
+
+        self._launch_chk = QCheckBox("Launch SimDeck at Windows startup")
+        self._launch_chk.setChecked(_get_startup_registry())
+        self._launch_chk.toggled.connect(self._on_startup_toggled)
+        cv.addWidget(self._launch_chk)
+        cv.addSpacing(6)
+
+        self._minimized_chk = QCheckBox("Start minimized to tray")
+        self._minimized_chk.setChecked(settings.get("start_minimized", False))
+        self._minimized_chk.toggled.connect(self._on_startup_toggled)
+        cv.addWidget(self._minimized_chk)
+
+        # ── CONNECTION ────────────────────────────────────────────────────────
+        cv.addSpacing(28)
+        cv.addWidget(self._section_hdr("CONNECTION"))
+        cv.addSpacing(10)
+
+        conn_desc = QLabel("SimHub Property Server TCP address")
+        conn_desc.setStyleSheet(f"color: {_MUTED};")
+        cv.addWidget(conn_desc)
+        cv.addSpacing(8)
+
+        conn_row = QHBoxLayout()
+        conn_row.setSpacing(8)
+
+        conn_row.addWidget(QLabel("Host"))
+        self._host_edit = QLineEdit(settings.get("simhub_host", config.SIMHUB_HOST))
+        self._host_edit.setFixedWidth(140)
+        conn_row.addWidget(self._host_edit)
+
+        conn_row.addSpacing(4)
+        conn_row.addWidget(QLabel("Port"))
+        self._port_edit = QLineEdit(str(settings.get("simhub_port", config.SIMHUB_PORT)))
+        self._port_edit.setFixedWidth(70)
+        conn_row.addWidget(self._port_edit)
+
+        conn_row.addSpacing(8)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setFixedWidth(80)
+        apply_btn.clicked.connect(self._on_conn_apply)
+        conn_row.addWidget(apply_btn)
+
+        self._conn_status_lbl = QLabel("")
+        self._conn_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        conn_row.addWidget(self._conn_status_lbl)
+        conn_row.addStretch()
+        cv.addLayout(conn_row)
+
+        cv.addStretch()
+        outer.addWidget(content)
+        outer.addStretch()
+
+    @staticmethod
+    def _section_hdr(text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
+        return lbl
+
+    # ── slots ─────────────────────────────────────────────────────────────────
+
+    def _on_font_slider(self, value: int) -> None:
+        self._font_val_lbl.setText(f"{value} pt")
+        self._on_font_change(value)
+
+    def _on_check_clicked(self) -> None:
+        self._check_btn.setEnabled(False)
+        self._update_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        self._update_status_lbl.setText("Checking…")
+        self._download_btn.setVisible(False)
+        self._on_check_update()
+
+    def set_update_result(self, version: str | None) -> None:
+        """Called on the main thread after a manual update check."""
+        self._check_btn.setEnabled(True)
+        if version:
+            self._update_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 14px;")
+            self._update_status_lbl.setText(f"v{version} available")
+            self._download_btn.setText(f"Download v{version}")
+            self._download_btn.setVisible(True)
+        else:
+            self._update_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+            self._update_status_lbl.setText("Up to date ✓")
+
+    def set_update_available(self, version: str) -> None:
+        """Called when the background startup check finds a newer version."""
+        self._update_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 14px;")
+        self._update_status_lbl.setText(f"v{version} available")
+        self._download_btn.setText(f"Download v{version}")
+        self._download_btn.setVisible(True)
+
+    def _on_startup_toggled(self) -> None:
+        self._on_startup_change(
+            self._launch_chk.isChecked(),
+            self._minimized_chk.isChecked(),
+        )
+
+    def _on_conn_apply(self) -> None:
+        host = self._host_edit.text().strip()
+        try:
+            port = int(self._port_edit.text().strip())
+            if not (1 <= port <= 65535):
+                raise ValueError
+        except ValueError:
+            self._conn_status_lbl.setStyleSheet("color: #e74c3c; font-size: 14px;")
+            self._conn_status_lbl.setText("Invalid port")
+            return
+        if not host:
+            self._conn_status_lbl.setStyleSheet("color: #e74c3c; font-size: 14px;")
+            self._conn_status_lbl.setText("Invalid host")
+            return
+        self._conn_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 14px;")
+        self._conn_status_lbl.setText("Applied — restarting engine…")
+        self._on_simhub_change(host, port)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main window
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1567,8 +1825,22 @@ class SimDeckApp(QMainWindow):
         settings       = settings_manager.load()
         self._tray     = None
 
+        # Apply saved font before any widgets are created
+        _apply_font_size(settings.get("font_size_pt", 10))
+
+        # Non-tab settings kept in sync with settings.json
+        self._app_settings: dict = {
+            "font_size_pt":    settings.get("font_size_pt",    10),
+            "start_minimized": settings.get("start_minimized", False),
+            "simhub_host":     settings.get("simhub_host",     config.SIMHUB_HOST),
+            "simhub_port":     settings.get("simhub_port",     config.SIMHUB_PORT),
+        }
+
         self._logger   = TelemetryLogger()
-        self._engine   = Engine()
+        self._engine   = Engine(
+            simhub_host=self._app_settings["simhub_host"],
+            simhub_port=self._app_settings["simhub_port"],
+        )
         self._splitter = UDPSplitter(
             listen_port=settings["splitter_port"],
             targets=[(t["ip"], t["port"]) for t in settings["splitter_targets"]],
@@ -1615,13 +1887,22 @@ class SimDeckApp(QMainWindow):
 
         main_tabs.addTab(lap_tabs, "Lap Logs")
 
+        # ── Settings ────────────────��──────────────────────────────────────
+        self._settings_tab = SettingsTab(
+            settings=settings,
+            on_font_change=self._on_font_change_setting,
+            on_check_update=self._manual_update_check,
+            on_startup_change=self._on_startup_change,
+            on_simhub_change=self._on_simhub_change,
+        )
+        main_tabs.addTab(self._settings_tab, "Settings")
+
         # Refresh history when the user switches to the Lap Logs main tab
         def _on_main_tab_changed(idx: int) -> None:
             if main_tabs.tabText(idx) == "Lap Logs":
                 self._history_tab.refresh()
 
         main_tabs.currentChanged.connect(_on_main_tab_changed)
-
 
         # Debounce timer
         self._restart_timer = QTimer(self)
@@ -1657,7 +1938,27 @@ class SimDeckApp(QMainWindow):
         settings = {}
         settings.update(self._lifx_tab.get_settings())
         settings.update(self._splitter_tab.get_settings())
+        settings.update(self._app_settings)
         settings_manager.save(settings)
+
+    def _on_font_change_setting(self, size_pt: int) -> None:
+        _apply_font_size(size_pt)
+        self._app_settings["font_size_pt"] = size_pt
+        self._save_settings()
+
+    def _on_startup_change(self, launch: bool, minimized: bool) -> None:
+        _set_startup_registry(launch)
+        self._app_settings["start_minimized"] = minimized
+        self._save_settings()
+
+    def _on_simhub_change(self, host: str, port: int) -> None:
+        self._app_settings["simhub_host"] = host
+        self._app_settings["simhub_port"] = port
+        self._save_settings()
+        self._engine.set_simhub_address(host, port)
+        self._restart_timer.stop()
+        self._lifx_tab.mark_pending(False)
+        self._do_restart()
 
     def _on_lifx_change(self) -> None:
         self._save_settings()
@@ -1724,6 +2025,7 @@ class SimDeckApp(QMainWindow):
         if latest:
             self._update_version = latest
             self._ui.call.emit(lambda: self._tray.update_menu())
+            self._ui.call.emit(lambda: self._settings_tab.set_update_available(latest))
 
     def _manual_update_check(self) -> None:
         def _worker() -> None:
@@ -1735,11 +2037,7 @@ class SimDeckApp(QMainWindow):
                     self._tray.notify(f"Update available: v{latest} — click tray menu to download.", "SimDeck")
                 except Exception:
                     pass
-            else:
-                try:
-                    self._tray.notify(f"SimDeck v{__version__} is up to date.", "SimDeck")
-                except Exception:
-                    pass
+            self._ui.call.emit(lambda: self._settings_tab.set_update_result(latest))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _setup_tray(self) -> None:
@@ -1769,6 +2067,10 @@ class SimDeckApp(QMainWindow):
             self._tray.stop()
         QApplication.instance().quit()
 
+    @property
+    def start_minimized(self) -> bool:
+        return bool(self._app_settings.get("start_minimized", False))
+
     def closeEvent(self, event) -> None:
         event.ignore()
         self._to_tray()
@@ -1778,5 +2080,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     _apply_dark_theme(app)
     window = SimDeckApp()
-    window.show()
+    if not window.start_minimized:
+        window.show()
     sys.exit(app.exec())
