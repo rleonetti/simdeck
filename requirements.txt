@@ -1,0 +1,4 @@
+lifxlan
+customtkinter
+pystray
+pillow
