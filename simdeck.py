@@ -6,9 +6,16 @@ Run this file for the GUI experience.
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
+import urllib.request
+import webbrowser
 from typing import Callable
+
+__version__ = "1.0.0"
+_RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
+_RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
 import psutil
 
@@ -78,6 +85,25 @@ _KNOWN_GAMES: list[dict[str, str]] = [
 ]
 
 _EXE_TO_NAME: dict[str, str] = {g["exe"]: g["name"] for g in _KNOWN_GAMES}
+
+
+def _check_for_update() -> str | None:
+    """Return the latest release tag (e.g. '1.2.0') if newer than __version__, else None."""
+    try:
+        req = urllib.request.Request(_RELEASES_URL, headers={"User-Agent": "SimDeck"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+        tag = data.get("tag_name", "").lstrip("v")
+        if not tag:
+            return None
+        def _ver(s):
+            try:
+                return tuple(int(x) for x in s.split("."))
+            except ValueError:
+                return (0,)
+        return tag if _ver(tag) > _ver(__version__) else None
+    except Exception:
+        return None
 
 
 def _detect_game() -> tuple[str | None, str | None]:
@@ -1125,11 +1151,14 @@ class SimDeckApp(QMainWindow):
         self._game_timer.start()
 
         self._last_tray_status: str | None = None
+        self._update_version: str | None = None
         self._setup_tray()
 
         initial_kwargs = self._lifx_tab.get_effect_kwargs()
         self._engine.start(initial_kwargs)
         self._splitter.start()
+
+        threading.Thread(target=self._bg_update_check, daemon=True).start()
 
     # ── settings ──────────────────────────────────────────────────────────────
 
@@ -1193,9 +1222,21 @@ class SimDeckApp(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def _bg_update_check(self) -> None:
+        latest = _check_for_update()
+        if latest:
+            self._update_version = latest
+            self._ui.call.emit(lambda: self._tray.update_menu())
+
     def _setup_tray(self) -> None:
         menu = pystray.Menu(
             pystray.MenuItem("Open", lambda *_: self._ui.call.emit(self._restore), default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda item: f"Update available: v{self._update_version} — click to download",
+                lambda *_: webbrowser.open(_RELEASES_PAGE),
+                visible=lambda item: self._update_version is not None,
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart Effects", lambda *_: self._ui.call.emit(self._force_restart)),
             pystray.Menu.SEPARATOR,
