@@ -34,6 +34,8 @@ Name: "startupicon"; Description: "Start SimDeck automatically when Windows star
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "simdeck_button.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "simdeck_button@2x.png"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\simdeck.ico"
