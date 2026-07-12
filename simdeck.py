@@ -323,6 +323,7 @@ class LIFXTab(QWidget):
     # ── build ─────────────────────────────────────────────────────────────────
 
     def _build(self, s: dict) -> None:
+        self._section_count = 0
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -577,17 +578,19 @@ class LIFXTab(QWidget):
                 self._set_group_state(name, cb.isChecked())
 
     def _section(self, layout: QVBoxLayout, text: str) -> QLabel:
+        self._section_count += 1
+        if self._section_count > 1:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setFrameShadow(QFrame.Shadow.Plain)
+            sep.setStyleSheet(f"color: {_GREY};")
+            layout.addWidget(sep)
         lbl = QLabel(text)
         lbl.setStyleSheet(
             f"font-size: 19px; font-weight: bold; color: {_MUTED};"
-            " padding-top: 12px; padding-bottom: 2px; padding-left: 10px;"
+            " padding-top: 10px; padding-bottom: 4px; padding-left: 10px;"
         )
         layout.addWidget(lbl)
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Plain)
-        sep.setStyleSheet(f"color: {_GREY};")
-        layout.addWidget(sep)
         return lbl
 
     def _slider(self, layout: QVBoxLayout, label: str, value: int, from_: int, to: int) -> _NoScrollSlider:
@@ -1731,7 +1734,9 @@ class SettingsTab(QWidget):
         self._font_slider.valueChanged.connect(self._on_font_slider)
 
         # ── UPDATES ───────────────────────────────────────────────────────────
-        cv.addSpacing(28)
+        cv.addSpacing(16)
+        cv.addWidget(self._make_sep())
+        cv.addSpacing(6)
         cv.addWidget(self._section_hdr("UPDATES"))
         cv.addSpacing(10)
 
@@ -1761,7 +1766,9 @@ class SettingsTab(QWidget):
         cv.addWidget(self._download_btn)
 
         # ── STARTUP ───────────────────────────────────────────────────────────
-        cv.addSpacing(28)
+        cv.addSpacing(16)
+        cv.addWidget(self._make_sep())
+        cv.addSpacing(6)
         cv.addWidget(self._section_hdr("STARTUP"))
         cv.addSpacing(10)
 
@@ -1777,7 +1784,9 @@ class SettingsTab(QWidget):
         cv.addWidget(self._minimized_chk)
 
         # ── CONNECTION ────────────────────────────────────────────────────────
-        cv.addSpacing(28)
+        cv.addSpacing(16)
+        cv.addWidget(self._make_sep())
+        cv.addSpacing(6)
         cv.addWidget(self._section_hdr("CONNECTION"))
         cv.addSpacing(10)
 
@@ -1817,20 +1826,18 @@ class SettingsTab(QWidget):
         outer.addStretch()
 
     @staticmethod
-    def _section_hdr(text: str) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(4)
+    def _section_hdr(text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
-        v.addWidget(lbl)
+        return lbl
+
+    @staticmethod
+    def _make_sep() -> QFrame:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(f"color: {_GREY};")
-        v.addWidget(sep)
-        return w
+        return sep
 
     # ── slots ─────────────────────────────────────────────────────────────────
 
