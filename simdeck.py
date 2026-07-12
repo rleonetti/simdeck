@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2015,7 +2015,6 @@ class SettingsTab(QWidget):
         cv.addSpacing(6)
 
         self._download_btn = QPushButton("Update Now")
-        self._download_btn.setFixedWidth(120)
         self._download_btn.setVisible(False)
         self._download_btn.clicked.connect(self._on_update_now_clicked)
         cv.addWidget(self._download_btn)
