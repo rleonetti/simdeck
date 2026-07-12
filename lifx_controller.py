@@ -73,22 +73,28 @@ class LIFXController:
         return ok
 
     def _connect_by_ip(self, ip: str) -> bool:
-        """Send discovery unicast to a specific IP — works across VLANs."""
+        """Send a single GetService unicast to a specific IP — avoids the
+        discover_devices() cascade (is_light/supports_multizone/is_switch) that
+        makes 4+ network calls per device and fails on slow responders."""
         import lifxlan.lifxlan as _mod
+        from lifxlan import Light
+        from lifxlan.msgtypes import GetService, StateService
+
         logger.info("Connecting directly to LIFX device at %s...", ip)
         orig = _mod.UDP_BROADCAST_IP_ADDRS
         _mod.UDP_BROADCAST_IP_ADDRS = [ip]
         try:
             lan = LifxLAN()
-            devices = lan.get_devices()
+            responses = lan.broadcast_with_resp(GetService, StateService)
         finally:
             _mod.UDP_BROADCAST_IP_ADDRS = orig
 
-        if not devices:
+        if not responses:
             logger.error("No LIFX device responded at %s", ip)
             return False
-        self._light = devices[0]
-        logger.success("Connected to: %s", self._light.get_label())
+        r = responses[0]
+        self._light = Light(r.target_addr, r.ip_addr)
+        logger.success("Connected to %s", ip)
         return True
 
     def _connect_by_broadcast(self) -> bool:
@@ -111,7 +117,9 @@ class LIFXController:
     def _detect_multizone(self) -> None:
         try:
             from lifxlan import MultiZoneLight
-            if isinstance(self._light, MultiZoneLight):
+            if self._light.supports_multizone():
+                # Re-wrap as MultiZoneLight to get zone-level set_zone_color
+                self._light = MultiZoneLight(self._light.mac_addr, self._light.ip_addr)
                 zones = self._light.get_color_zones(0, 255)
                 self._num_zones = len(zones)
                 self._is_multizone = True

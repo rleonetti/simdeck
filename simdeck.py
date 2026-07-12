@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -1120,50 +1120,63 @@ class _LightScanDialog(QDialog):
         self._scan_btn.setEnabled(False)
         self._list.clear()
         self._discovered = []
-        self._scan_status.setText("Scanning… (up to 5 seconds)")
+        self._scan_status.setText("Scanning… (up to 10 seconds)")
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self) -> None:
         try:
             import lifxlan.lifxlan as _mod
-            from lifxlan import LifxLAN
+            from lifxlan import LifxLAN, Light
+            from lifxlan.msgtypes import GetService, StateService
 
-            result: list[dict] = []
-            seen: set[str] = set()
-
-            def _add_device(dev) -> None:
-                try:
-                    ip = dev.get_ip_addr()
-                    if ip in seen:
-                        return
-                    seen.add(ip)
-                    result.append({
-                        "ip":    ip,
-                        "label": dev.get_label() or "",
-                        "type":  "multizone" if dev.supports_multizone() else "single",
-                    })
-                except Exception:
-                    pass
-
-            # Broadcast discovery
-            try:
-                for dev in LifxLAN().get_lights():
-                    _add_device(dev)
-            except Exception:
-                pass
-
-            # Unicast fallback for each known IP (bypasses Windows Firewall blocking broadcast)
             orig = _mod.UDP_BROADCAST_IP_ADDRS
+
+            # Derive subnets from registry IPs so the sweep finds all lights on
+            # the same /24, not just broadcast (which Windows Firewall blocks).
+            subnets: set[str] = set()
             for ip in self._known_ips:
-                if ip in seen:
-                    continue
-                _mod.UDP_BROADCAST_IP_ADDRS = [ip]
-                try:
-                    for dev in LifxLAN().get_devices():
-                        _add_device(dev)
-                except Exception:
-                    pass
+                parts = ip.split(".")
+                if len(parts) == 4:
+                    subnets.add(".".join(parts[:3]))
+
+            # Fallback: try the local subnet detected by lifxlan
+            if not subnets:
+                for addr in orig:
+                    parts = addr.split(".")
+                    if len(parts) == 4 and parts[-1] == "255":
+                        subnets.add(".".join(parts[:3]))
+
+            # Phase 1: fast GetService sweep, batch 100 IPs at a time.
+            # max_attempts=2 resends each batch so slower devices get a second
+            # chance. This finds all devices without making per-device calls.
+            found: dict[str, str] = {}  # mac -> ip
+            for prefix in sorted(subnets):
+                all_ips = [f"{prefix}.{i}" for i in range(1, 255)]
+                batches = [all_ips[i:i + 100] for i in range(0, len(all_ips), 100)]
+                for batch in batches:
+                    _mod.UDP_BROADCAST_IP_ADDRS = batch
+                    try:
+                        lan = LifxLAN()
+                        responses = lan.broadcast_with_resp(
+                            GetService, StateService, timeout_secs=0.5, max_attempts=2
+                        )
+                        for r in responses:
+                            if r.target_addr not in found:
+                                found[r.target_addr] = r.ip_addr
+                    except Exception:
+                        pass
             _mod.UDP_BROADCAST_IP_ADDRS = orig
+
+            # Phase 2: get label and type for each discovered device.
+            result: list[dict] = []
+            for mac, ip in sorted(found.items(), key=lambda x: tuple(int(p) for p in x[1].split("."))):
+                try:
+                    light = Light(mac, ip)
+                    label = light.get_label() or ""
+                    mz = light.supports_multizone()
+                    result.append({"ip": ip, "label": label, "type": "multizone" if mz else "single"})
+                except Exception:
+                    result.append({"ip": ip, "label": "", "type": "single"})
 
             self._scan_status_text = f"Found {len(result)} light(s)." if result else "No lights found."
         except Exception as exc:
@@ -1172,9 +1185,15 @@ class _LightScanDialog(QDialog):
         self._scan_done.emit(result)
 
     def _finish_scan(self, result: list) -> None:
-        self._discovered = result
+        # Only show lights not already in the registry
+        registered = set(self._known_ips)
+        self._discovered = [d for d in result if d["ip"] not in registered]
+        skipped = len(result) - len(self._discovered)
+        status = getattr(self, "_scan_status_text", "")
+        if skipped:
+            status += f" ({skipped} already in registry, hidden)"
         self._scan_btn.setEnabled(True)
-        self._scan_status.setText(getattr(self, "_scan_status_text", ""))
+        self._scan_status.setText(status)
         self._list.clear()
         type_label = {"multizone": "Strip", "single": "Bulb"}
         for d in self._discovered:
