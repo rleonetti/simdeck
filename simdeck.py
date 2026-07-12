@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.2.4"
+__version__ = "1.2.5"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2118,6 +2118,11 @@ class LoggerTab(QWidget):
         bar_h.addWidget(self._toggle_btn)
         root.addWidget(bar_w)
 
+        # Vehicle / track subtitle
+        self._session_meta_lbl = QLabel("")
+        self._session_meta_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 16px; padding-left: 2px;")
+        root.addWidget(self._session_meta_lbl)
+
         # Live stats row
         stats_w = QWidget()
         stats_h = QHBoxLayout(stats_w)
@@ -2202,6 +2207,7 @@ class LoggerTab(QWidget):
         self._rec_lbl.setText("Not recording")
         self._rec_lbl.setStyleSheet(f"color: {_MUTED};")
         self._toggle_btn.setText("Start Recording")
+        self._session_meta_lbl.setText("")
 
     def _toggle(self) -> None:
         if self._logger.recording:
@@ -2288,6 +2294,14 @@ class LoggerTab(QWidget):
         last_t      = telemetry.get("last_lap_time",    0.0)
         best_t      = telemetry.get("best_lap_time",    0.0)
         checkered   = telemetry.get("flag_checkered",   0.0)
+        vehicle     = telemetry.get("vehicle", "") or ""
+        track       = telemetry.get("track",   "") or ""
+
+        def _readable(s: str) -> bool:
+            # suppress internal codes like "DT__260712040345" (all-caps/digits/underscores)
+            return bool(s) and not all(c.isupper() or c.isdigit() or c in "_- " for c in s)
+        meta_parts = [p for p in [vehicle, track] if _readable(p)]
+        self._session_meta_lbl.setText("  ·  ".join(meta_parts))
 
         if cur_lap is not None:
             self._stat_lap.setText(str(int(cur_lap)))

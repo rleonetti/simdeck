@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.5 — 2026-07-12
+### Added
+- Vehicle and track shown in Logger tab during active recording (suppresses internal codes like Forza's `DT__*` track identifiers)
+
+### Fixed
+- Empty sessions from loading-screen start/stop cycles are automatically deleted on recording stop — no more blank rows in History
+
 ## v1.2.4 — 2026-07-12
 ### Added
 - Auto Record defaults to enabled — recording starts automatically when SimHub connects, no manual step needed

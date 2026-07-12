@@ -94,6 +94,7 @@ class TelemetryLogger:
 
     def stop_session(self) -> None:
         with self._lock:
+            sid = self._session_id
             self._session_id       = None
             self._session_game     = None
             self._prev_lap         = None
@@ -102,6 +103,13 @@ class TelemetryLogger:
             self._prev_cur_time_ms = None
             self._session_vehicle  = None
             self._session_track    = None
+            if sid is not None:
+                lap_count = self._conn.execute(
+                    "SELECT COUNT(*) FROM laps WHERE session_id=?", (sid,)
+                ).fetchone()[0]
+                if lap_count == 0:
+                    self._conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
+                    self._conn.commit()
 
     def flush_pending_lap(self) -> None:
         """For Forza: telemetry stops without a lap-end signal — save the last known time."""
