@@ -44,6 +44,7 @@ DEFAULTS: dict = {
     },
     # App-level settings
     "font_size_pt":    10,
+    "accent_color":    "#f0a500",
     "start_minimized": False,
     "simhub_host":     "127.0.0.1",
     "simhub_port":     18082,

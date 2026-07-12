@@ -1,23 +1,16 @@
-"""
-SimDeck Test Harness — interactive telemetry simulator.
-
-TestPanel is an embeddable QWidget; TestHarness wraps it as a standalone window.
-Call TestPanel.connect() in a background thread after building.
-
-Usage: python test_harness.py
-"""
+"""SimDeck Test Harness — per-effect interactive testing."""
 
 import sys
 import threading
 import time
+from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
+    QApplication, QMainWindow, QWidget, QTabWidget, QButtonGroup,
     QVBoxLayout, QHBoxLayout,
-    QLabel, QSlider, QCheckBox, QPushButton, QLineEdit,
-    QFrame,
+    QLabel, QSlider, QCheckBox, QPushButton, QLineEdit, QFrame,
 )
 
 import config
@@ -38,12 +31,23 @@ POLL_HZ       = 20
 POLL_INTERVAL = 1 / POLL_HZ
 RAMP_SECONDS  = 4.0
 
-_ANIM_STYLES: dict[str, tuple[str, str]] = {
-    "Center":     ("rev_counter", "center"),
-    "Left/Right": ("rev_counter", "left_right"),
-    "Full":       ("rev_counter", "full"),
-    "Rev Lights": ("rev_lights",  "left_right"),
-}
+_FLAGS = [
+    ("None",      None,             "#555555"),
+    ("Yellow",    "flag_yellow",    "#f0c030"),
+    ("Red",       "flag_red",       "#e74c3c"),
+    ("Blue",      "flag_blue",      "#3498db"),
+    ("White",     "flag_white",     "#dddddd"),
+    ("Green",     "flag_green",     "#2ecc71"),
+    ("Checkered", "flag_checkered", "#aaaaaa"),
+    ("Black",     "flag_black",     "#777777"),
+]
+
+_REV_MODES = [
+    ("Center",      "rev_counter", "center"),
+    ("Left / Right","rev_counter", "left_right"),
+    ("Full Fill",   "rev_counter", "full"),
+    ("Rev Lights",  "rev_lights",  "left_right"),
+]
 
 
 def _apply_dark_theme(app: QApplication) -> None:
@@ -66,7 +70,6 @@ def _apply_dark_theme(app: QApplication) -> None:
 
 class _UISignal(QObject):
     call = Signal(object)
-
     def __init__(self) -> None:
         super().__init__()
         self.call.connect(lambda fn: fn())
@@ -78,59 +81,81 @@ class _NoScrollSlider(QSlider):
 
 
 class TestPanel(QWidget):
-    """Embeddable test controls. Call connect() in a background thread after adding to a layout."""
+    """Embeddable per-effect test panel. Call connect() in a background thread after adding to a layout."""
 
-    def __init__(self, parent: QWidget, ui: "_UISignal | None" = None) -> None:
+    def __init__(self, parent: QWidget, ui: "_UISignal | None" = None,
+                 get_effect_kwargs: "Callable | None" = None) -> None:
         super().__init__(parent)
-
         self._ui                = ui
+        self._get_effect_kwargs = get_effect_kwargs
         self._effects: list     = []
         self._rig               = None
         self._connected         = False
         self._shared_rig        = False
-        self._ramp_active       = False
-        self._ramp_brake_active = False
+        self._ramp_rpm          = False
+        self._ramp_brake        = False
         self._lock              = threading.Lock()
-        self._telemetry         = {"rpm": 0.0, "max_rpm": 8500.0, "brake": 0.0}
+        self._telemetry: dict   = {
+            "rpm": 0.0, "max_rpm": 8500.0, "brake": 0.0,
+            "flag_yellow": 0.0, "flag_red": 0.0, "flag_blue": 0.0,
+            "flag_white": 0.0, "flag_green": 0.0, "flag_checkered": 0.0,
+            "flag_black": 0.0, "pit_limiter": 0.0,
+        }
         self._settings: dict    = {}
-
-        self._poll_timer = QTimer(self)
+        self._poll_timer        = QTimer(self)
         self._poll_timer.setInterval(int(POLL_INTERVAL * 1000))
         self._poll_timer.timeout.connect(self._poll)
-
         self._build()
 
     # ── build ─────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        v = QVBoxLayout(self)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(4)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 8, 12, 8)
+        root.setSpacing(8)
 
         # Status row
-        top_w = QWidget()
-        top_h = QHBoxLayout(top_w)
-        top_h.setContentsMargins(12, 8, 12, 4)
-        top_h.addStretch()
-        self._status_lbl = QLabel("Connecting…")
-        self._status_lbl.setStyleSheet(f"color: {_MUTED};")
-        top_h.addWidget(self._status_lbl)
+        st_w = QWidget()
+        st_h = QHBoxLayout(st_w)
+        st_h.setContentsMargins(0, 0, 0, 0)
+        self._status_lbl = QLabel("Not connected")
+        self._status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        st_h.addWidget(self._status_lbl)
         self._status_dot = QLabel("●")
-        self._status_dot.setStyleSheet(f"color: {_YELLOW}; font-size: 18px;")
-        top_h.addWidget(self._status_dot)
-        v.addWidget(top_w)
+        self._status_dot.setStyleSheet(f"color: {_MUTED}; font-size: 16px;")
+        st_h.addWidget(self._status_dot)
+        st_h.addStretch()
+        root.addWidget(st_w)
 
-        # Max RPM + Full range row
+        # Per-effect panels in a tab widget
+        self._tabs = QTabWidget()
+        self._tabs.tabBar().setObjectName("sub_tab_bar")
+        self._tabs.tabBar().setDrawBase(False)
+        self._tabs.addTab(self._build_rev_panel(),   "Rev Counter")
+        self._tabs.addTab(self._build_brake_panel(), "Brake Lights")
+        self._tabs.addTab(self._build_flags_panel(), "Flags")
+        self._tabs.addTab(self._build_pit_panel(),   "Pit Limiter")
+        root.addWidget(self._tabs, stretch=1)
+
+    # ── Rev Counter panel ─────────────────────────────────────────────────────
+
+    def _build_rev_panel(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 10, 0, 8)
+        v.setSpacing(8)
+
+        # Max RPM + full range
         cfg_w = QWidget()
         cfg_h = QHBoxLayout(cfg_w)
-        cfg_h.setContentsMargins(12, 0, 12, 0)
+        cfg_h.setContentsMargins(0, 0, 0, 0)
         cfg_h.setSpacing(6)
         cfg_h.addWidget(QLabel("Max RPM"))
         self._max_rpm_entry = QLineEdit("8500")
         self._max_rpm_entry.setFixedWidth(80)
         cfg_h.addWidget(self._max_rpm_entry)
         set_btn = QPushButton("Set")
-        set_btn.setFixedSize(50, 28)
+        set_btn.setFixedWidth(50)
         set_btn.clicked.connect(self._set_max_rpm)
         cfg_h.addWidget(set_btn)
         cfg_h.addStretch()
@@ -140,84 +165,150 @@ class TestPanel(QWidget):
         cfg_h.addWidget(self._full_range_cb)
         v.addWidget(cfg_w)
 
-        # Animation style selector
-        anim_w = QWidget()
-        anim_h = QHBoxLayout(anim_w)
-        anim_h.setContentsMargins(12, 0, 12, 0)
-        anim_h.setSpacing(6)
-        anim_lbl = QLabel("Animation")
-        anim_lbl.setFixedWidth(80)
-        anim_h.addWidget(anim_lbl)
-        self._anim_btns: dict[str, QPushButton] = {}
-        from PySide6.QtWidgets import QButtonGroup
-        self._anim_group = QButtonGroup(self)
-        self._anim_group.setExclusive(True)
-        for i, name in enumerate(_ANIM_STYLES):
-            btn = QPushButton(name)
+        # Animation mode
+        mode_w = QWidget()
+        mode_h = QHBoxLayout(mode_w)
+        mode_h.setContentsMargins(0, 0, 0, 0)
+        mode_h.setSpacing(6)
+        mode_h.addWidget(QLabel("Mode"))
+        self._rev_mode_group = QButtonGroup(self)
+        self._rev_mode_group.setExclusive(True)
+        self._rev_mode_btns: list[QPushButton] = []
+        for i, (label, _eff, _mode) in enumerate(_REV_MODES):
+            btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(i == 0)
-            btn.setFixedHeight(28)
-            self._anim_group.addButton(btn, i)
-            anim_h.addWidget(btn)
-            self._anim_btns[name] = btn
-        self._anim_group.idClicked.connect(lambda _: self._rebuild_effects())
-        anim_h.addStretch()
-        v.addWidget(anim_w)
+            self._rev_mode_group.addButton(btn, i)
+            mode_h.addWidget(btn)
+            self._rev_mode_btns.append(btn)
+        self._rev_mode_group.idClicked.connect(lambda _: self._rebuild_effects())
+        mode_h.addStretch()
+        v.addWidget(mode_w)
 
-        # Sliders panel
-        panel_f = QFrame()
-        panel_f.setFrameShape(QFrame.Shape.StyledPanel)
-        panel_v = QVBoxLayout(panel_f)
-        panel_v.setContentsMargins(12, 8, 12, 8)
-        panel_v.setSpacing(5)
-        self._rpm_slider,   self._rpm_lbl   = self._make_slider(panel_v, "RPM",     0, 8500)
-        self._brake_slider, self._brake_lbl = self._make_slider(panel_v, "Brake %", 0,  100)
-        v.addWidget(panel_f)
+        # RPM slider
+        self._rpm_slider, self._rpm_lbl = self._make_slider(v, "RPM", 0, 8500)
+        self._rpm_slider.valueChanged.connect(lambda val: self._set_tel("rpm", float(val)))
 
-        # Action buttons
-        btns_w = QWidget()
-        btns_h = QHBoxLayout(btns_w)
-        btns_h.setContentsMargins(12, 0, 12, 0)
-        btns_h.setSpacing(8)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #333;")
+        v.addWidget(sep)
+
+        # Ramp + snap buttons
+        act_w = QWidget()
+        act_h = QHBoxLayout(act_w)
+        act_h.setContentsMargins(0, 0, 0, 0)
+        act_h.setSpacing(6)
         self._ramp_btn = QPushButton("▶  Ramp RPM")
-        self._ramp_btn.setFixedWidth(130)
         self._ramp_btn.clicked.connect(self._toggle_ramp)
-        btns_h.addWidget(self._ramp_btn)
-        self._ramp_brake_btn = QPushButton("▶  Ramp Brake")
-        self._ramp_brake_btn.setFixedWidth(130)
-        self._ramp_brake_btn.clicked.connect(self._toggle_ramp_brake)
-        btns_h.addWidget(self._ramp_brake_btn)
-        reset_btn = QPushButton("Reset")
-        reset_btn.setFixedWidth(80)
-        reset_btn.setStyleSheet("QPushButton { background: transparent; border: 1px solid #555; }")
-        reset_btn.clicked.connect(self._reset)
-        btns_h.addWidget(reset_btn)
-        btns_h.addStretch()
-        v.addWidget(btns_w)
-
-        # Scenario shortcuts
-        sc_hdr = QLabel("SCENARIOS")
-        sc_hdr.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {_MUTED}; padding-left: 12px; padding-top: 6px;")
-        v.addWidget(sc_hdr)
-        sc_w = QWidget()
-        sc_h = QHBoxLayout(sc_w)
-        sc_h.setContentsMargins(12, 0, 12, 0)
-        sc_h.setSpacing(6)
-        for label, fn in (
-            ("Idle",    self._scenario_idle),
-            ("Mid Rev", self._scenario_mid),
-            ("Redline", self._scenario_redline),
-            ("Braking", self._scenario_braking),
-        ):
+        act_h.addWidget(self._ramp_btn)
+        for label, frac in (("Idle", 0.0), ("Mid", 0.65), ("Redline", 0.98)):
             btn = QPushButton(label)
-            btn.setFixedWidth(90)
-            btn.clicked.connect(fn)
-            sc_h.addWidget(btn)
-        sc_h.addStretch()
-        v.addWidget(sc_w)
-        v.addStretch()
+            btn.clicked.connect(lambda _, f=frac: self._snap_rpm(f))
+            act_h.addWidget(btn)
+        act_h.addStretch()
+        v.addWidget(act_w)
 
-    def _make_slider(self, layout: QVBoxLayout, label: str, from_: int, to: int) -> tuple:
+        v.addStretch()
+        return w
+
+    # ── Brake Lights panel ────────────────────────────────────────────────────
+
+    def _build_brake_panel(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 10, 0, 8)
+        v.setSpacing(8)
+
+        self._brake_slider, self._brake_lbl = self._make_slider(v, "Brake %", 0, 100)
+        self._brake_slider.valueChanged.connect(lambda val: self._set_tel("brake", float(val)))
+
+        act_w = QWidget()
+        act_h = QHBoxLayout(act_w)
+        act_h.setContentsMargins(0, 0, 0, 0)
+        act_h.setSpacing(6)
+        self._ramp_brake_btn = QPushButton("▶  Ramp Brake")
+        self._ramp_brake_btn.clicked.connect(self._toggle_ramp_brake)
+        act_h.addWidget(self._ramp_brake_btn)
+        rel_btn = QPushButton("Release")
+        rel_btn.clicked.connect(lambda: self._set_tel_ui("brake", 0.0))
+        act_h.addWidget(rel_btn)
+        act_h.addStretch()
+        v.addWidget(act_w)
+
+        v.addStretch()
+        return w
+
+    # ── Flags panel ───────────────────────────────────────────────────────────
+
+    def _build_flags_panel(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 10, 0, 8)
+        v.setSpacing(12)
+
+        note = QLabel("Click a flag to simulate it on your lights. Only one is active at a time.")
+        note.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        note.setWordWrap(True)
+        v.addWidget(note)
+
+        grid_w = QWidget()
+        grid   = QHBoxLayout(grid_w)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(8)
+        grid.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self._flag_group = QButtonGroup(self)
+        self._flag_group.setExclusive(True)
+
+        for i, (label, key, color) in enumerate(_FLAGS):
+            cell_w = QWidget()
+            cell_h = QHBoxLayout(cell_w)
+            cell_h.setContentsMargins(0, 0, 0, 0)
+            cell_h.setSpacing(4)
+            if key is not None:
+                dot = QLabel("●")
+                dot.setStyleSheet(f"color: {color}; font-size: 13px;")
+                cell_h.addWidget(dot)
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(key is None)
+            btn.setMinimumWidth(85)
+            self._flag_group.addButton(btn, i)
+            cell_h.addWidget(btn)
+            grid.addWidget(cell_w)
+
+        self._flag_group.idClicked.connect(self._on_flag_selected)
+        v.addWidget(grid_w)
+        v.addStretch()
+        return w
+
+    # ── Pit Limiter panel ─────────────────────────────────────────────────────
+
+    def _build_pit_panel(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 10, 0, 8)
+        v.setSpacing(10)
+
+        note = QLabel("Simulate the pit lane speed limiter being active.")
+        note.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        v.addWidget(note)
+
+        self._pit_btn = QPushButton("Activate Pit Limiter")
+        self._pit_btn.setCheckable(True)
+        self._pit_btn.setFixedWidth(200)
+        self._pit_btn.setStyleSheet(
+            "QPushButton:checked { background-color: #c07800; color: #000; border-color: #c07800; }"
+        )
+        self._pit_btn.toggled.connect(self._on_pit_toggled)
+        v.addWidget(self._pit_btn)
+        v.addStretch()
+        return w
+
+    # ── shared slider builder ─────────────────────────────────────────────────
+
+    def _make_slider(self, layout, label: str, from_: int, to: int) -> tuple:
         row_w = QWidget()
         row_h = QHBoxLayout(row_w)
         row_h.setContentsMargins(0, 0, 0, 0)
@@ -242,15 +333,48 @@ class TestPanel(QWidget):
         layout.addWidget(row_w)
         return sl, val_lbl
 
-    # ── controls ──────────────────────────────────────────────────────────────
+    # ── telemetry helpers ─────────────────────────────────────────────────────
 
-    def _on_rpm(self, v: int) -> None:
+    def _set_tel(self, key: str, value: float) -> None:
         with self._lock:
-            self._telemetry["rpm"] = float(v)
+            self._telemetry[key] = value
 
-    def _on_brake(self, v: int) -> None:
+    def _set_tel_ui(self, key: str, value: float) -> None:
+        """Set telemetry and sync the matching slider widget."""
         with self._lock:
-            self._telemetry["brake"] = float(v)
+            self._telemetry[key] = value
+        if key == "brake":
+            self._brake_slider.blockSignals(True)
+            self._brake_slider.setValue(int(value))
+            self._brake_slider.blockSignals(False)
+            self._brake_lbl.setText(str(int(value)))
+        elif key == "rpm":
+            self._rpm_slider.blockSignals(True)
+            self._rpm_slider.setValue(int(value))
+            self._rpm_slider.blockSignals(False)
+            self._rpm_lbl.setText(str(int(value)))
+
+    def _snap_rpm(self, fraction: float) -> None:
+        self._ramp_rpm = False
+        self._ramp_btn.setText("▶  Ramp RPM")
+        with self._lock:
+            max_rpm = self._telemetry["max_rpm"]
+        self._set_tel_ui("rpm", max_rpm * fraction)
+
+    # ── flag / pit controls ───────────────────────────────────────────────────
+
+    def _on_flag_selected(self, idx: int) -> None:
+        _label, key, _color = _FLAGS[idx]
+        with self._lock:
+            for _, fkey, _ in _FLAGS:
+                if fkey:
+                    self._telemetry[fkey] = 1.0 if fkey == key else 0.0
+
+    def _on_pit_toggled(self, on: bool) -> None:
+        self._pit_btn.setText("Deactivate Pit Limiter" if on else "Activate Pit Limiter")
+        self._set_tel("pit_limiter", 1.0 if on else 0.0)
+
+    # ── RPM / brake ramps ─────────────────────────────────────────────────────
 
     def _set_max_rpm(self) -> None:
         try:
@@ -262,108 +386,74 @@ class TestPanel(QWidget):
         self._rpm_slider.setRange(0, int(max_rpm))
 
     def _toggle_ramp(self) -> None:
-        if self._ramp_active:
-            self._ramp_active = False
+        if self._ramp_rpm:
+            self._ramp_rpm = False
             self._ramp_btn.setText("▶  Ramp RPM")
         else:
-            self._ramp_active = True
+            self._ramp_rpm = True
             self._ramp_btn.setText("■  Stop Ramp")
             threading.Thread(target=self._ramp_loop, daemon=True).start()
 
     def _ramp_loop(self) -> None:
         direction = 1
         current   = 0.0
-        while self._ramp_active:
+        while self._ramp_rpm:
             with self._lock:
                 max_rpm = self._telemetry["max_rpm"]
             step    = max_rpm / (RAMP_SECONDS * POLL_HZ)
             current = max(0.0, min(max_rpm, current + step * direction))
-            if current >= max_rpm:
-                direction = -1
-            elif current <= 0:
-                direction = 1
+            direction = -1 if current >= max_rpm else (1 if current <= 0 else direction)
             with self._lock:
                 self._telemetry["rpm"] = current
             time.sleep(POLL_INTERVAL)
 
     def _toggle_ramp_brake(self) -> None:
-        if self._ramp_brake_active:
-            self._ramp_brake_active = False
+        if self._ramp_brake:
+            self._ramp_brake = False
             self._ramp_brake_btn.setText("▶  Ramp Brake")
         else:
-            self._ramp_brake_active = True
+            self._ramp_brake = True
             self._ramp_brake_btn.setText("■  Stop Brake")
             threading.Thread(target=self._ramp_brake_loop, daemon=True).start()
 
     def _ramp_brake_loop(self) -> None:
         direction = 1
         current   = 0.0
-        while self._ramp_brake_active:
+        while self._ramp_brake:
             step    = 100.0 / (RAMP_SECONDS * POLL_HZ)
             current = max(0.0, min(100.0, current + step * direction))
-            if current >= 100.0:
-                direction = -1
-            elif current <= 0.0:
-                direction = 1
+            direction = -1 if current >= 100.0 else (1 if current <= 0.0 else direction)
             with self._lock:
                 self._telemetry["brake"] = current
             time.sleep(POLL_INTERVAL)
 
-    def _reset(self) -> None:
-        self._ramp_active       = False
-        self._ramp_brake_active = False
-        self._ramp_btn.setText("▶  Ramp RPM")
-        self._ramp_brake_btn.setText("▶  Ramp Brake")
-        with self._lock:
-            self._telemetry["rpm"]   = 0.0
-            self._telemetry["brake"] = 0.0
+    # ── effect management ─────────────────────────────────────────────────────
 
-    # ── scenarios ─────────────────────────────────────────────────────────────
-
-    def _scenario_idle(self) -> None:
-        self._ramp_active = False
-        self._ramp_btn.setText("▶  Ramp RPM")
-        with self._lock:
-            self._telemetry["rpm"]   = 0.0
-            self._telemetry["brake"] = 0.0
-
-    def _scenario_mid(self) -> None:
-        self._ramp_active = False
-        self._ramp_btn.setText("▶  Ramp RPM")
-        with self._lock:
-            self._telemetry["rpm"]   = self._telemetry["max_rpm"] * 0.65
-            self._telemetry["brake"] = 0.0
-
-    def _scenario_redline(self) -> None:
-        self._ramp_active = False
-        self._ramp_btn.setText("▶  Ramp RPM")
-        with self._lock:
-            self._telemetry["rpm"]   = self._telemetry["max_rpm"] * 0.98
-            self._telemetry["brake"] = 0.0
-
-    def _scenario_braking(self) -> None:
-        self._ramp_active = False
-        self._ramp_btn.setText("▶  Ramp RPM")
-        with self._lock:
-            self._telemetry["rpm"]   = 0.0
-            self._telemetry["brake"] = 80.0
-
-    # ── connection ────────────────────────────────────────────────────────────
-
-    def _selected_anim(self) -> str:
-        for name, btn in self._anim_btns.items():
+    def _selected_rev_mode(self) -> tuple[str, str]:
+        for i, btn in enumerate(self._rev_mode_btns):
             if btn.isChecked():
-                return name
-        return "Center"
+                _, effect, mode = _REV_MODES[i]
+                return effect, mode
+        return "rev_counter", "center"
 
-    def _build_effect_kwargs(self, s: dict) -> dict:
+    def _get_active_effect_kwargs(self) -> dict:
+        if self._get_effect_kwargs:
+            kwargs = dict(self._get_effect_kwargs())
+            rev_effect, counter_mode = self._selected_rev_mode()
+            # Always run all effects in test mode regardless of main-tab checkboxes
+            kwargs["active_effects"] = [
+                rev_effect, "brake_lights", "flag_effect", "pit_limiter"
+            ]
+            kwargs["counter_mode"] = counter_mode
+            if self._full_range_cb.isChecked():
+                kwargs["start_rpm"]       = 0
+                kwargs["start_threshold"] = 0.0
+            return kwargs
+        # Standalone: build from settings + config, always all effects
+        s          = settings_manager.load()
         full_range = self._full_range_cb.isChecked()
-        rev_effect, counter_mode = _ANIM_STYLES.get(self._selected_anim(), ("rev_counter", "center"))
-
-        active = [rev_effect]
-        if "brake_lights" in config.ACTIVE_EFFECTS:
-            active.append("brake_lights")
-
+        rev_effect, counter_mode = self._selected_rev_mode()
+        active = [rev_effect, "brake_lights", "flag_effect", "pit_limiter"]
         return {
             "active_effects":             active,
             "start_rpm":                  0 if full_range else s.get("start_rpm", config.REV_START_RPM),
@@ -386,11 +476,23 @@ class TestPanel(QWidget):
             "pit_limiter_flash_interval": config.PIT_LIMITER_FLASH_INTERVAL,
         }
 
+    def _rebuild_effects(self) -> None:
+        if not self._rig:
+            return
+        kwargs = self._get_active_effect_kwargs()
+        active = kwargs.get("active_effects", [])
+        self._effects = [
+            cls(self._rig, **kwargs)
+            for name in active
+            if (cls := EFFECTS.get(name))
+        ]
+
+    # ── connection ────────────────────────────────────────────────────────────
+
     def connect(self, shared_rig: LightRig | None = None) -> None:
-        """Connect to LIFX lights and start the poll loop. Call from a background thread."""
-        s             = settings_manager.load()
-        effect_kwargs = self._build_effect_kwargs(s)
-        active        = effect_kwargs["active_effects"]
+        """Connect to LIFX lights. Call from a background thread."""
+        effect_kwargs = self._get_active_effect_kwargs()
+        active        = effect_kwargs.get("active_effects", [])
 
         needed: set[str] = set()
         for name in active:
@@ -429,20 +531,19 @@ class TestPanel(QWidget):
                 ))
             rig.connect_all()
 
-        connected = sum(1 for name in needed if (c := rig.get(name)) and c.connected)
+        connected = sum(1 for n in needed if (c := rig.get(n)) and c.connected)
         total     = len(needed)
 
         self._rig       = rig
         self._connected = connected > 0
-        self._settings  = s
-
-        self._rebuild_effects_from_kwargs(effect_kwargs)
+        self._settings  = settings_manager.load()
+        self._rebuild_effects()
 
         color = _GREEN if self._connected else _RED
         text  = f"{connected}/{total} lights connected" if total else "No lights needed"
 
         def _update_ui() -> None:
-            self._status_dot.setStyleSheet(f"color: {color}; font-size: 18px;")
+            self._status_dot.setStyleSheet(f"color: {color}; font-size: 16px;")
             self._status_lbl.setText(text)
             if self._connected:
                 self._poll_timer.start()
@@ -453,30 +554,14 @@ class TestPanel(QWidget):
             QTimer.singleShot(0, _update_ui)
 
     def disconnect(self) -> None:
-        """Stop polling and release lights."""
-        self._ramp_active       = False
-        self._ramp_brake_active = False
-        self._connected         = False
+        self._ramp_rpm   = False
+        self._ramp_brake = False
+        self._connected  = False
         self._poll_timer.stop()
-        if self._rig:
+        if self._rig and not self._shared_rig:
             strip = self._rig.get("strip")
             if strip:
                 strip.set_idle()
-
-    def _rebuild_effects(self) -> None:
-        if not self._rig:
-            return
-        s = self._settings or settings_manager.load()
-        self._rebuild_effects_from_kwargs(self._build_effect_kwargs(s))
-
-    def _rebuild_effects_from_kwargs(self, effect_kwargs: dict) -> None:
-        active  = effect_kwargs["active_effects"]
-        effects = []
-        for name in active:
-            cls = EFFECTS.get(name)
-            if cls:
-                effects.append(cls(self._rig, **effect_kwargs))
-        self._effects = effects
 
     # ── poll ──────────────────────────────────────────────────────────────────
 
@@ -487,11 +572,16 @@ class TestPanel(QWidget):
         with self._lock:
             tel = dict(self._telemetry)
 
+        # Sync slider display (blockSignals prevents feedback loop)
         rpm   = int(tel["rpm"])
         brake = int(tel["brake"])
+        self._rpm_slider.blockSignals(True)
         self._rpm_slider.setValue(rpm)
+        self._rpm_slider.blockSignals(False)
         self._rpm_lbl.setText(str(rpm))
+        self._brake_slider.blockSignals(True)
         self._brake_slider.setValue(brake)
+        self._brake_slider.blockSignals(False)
         self._brake_lbl.setText(str(brake))
 
         for effect in self._effects:
@@ -509,26 +599,18 @@ class TestHarness(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SimDeck — Test Harness")
-        self.resize(480, 460)
-        self.setFixedSize(480, 460)
+        self.resize(560, 400)
 
         central = QWidget()
         self.setCentralWidget(central)
         v = QVBoxLayout(central)
-        v.setContentsMargins(0, 12, 0, 0)
-
-        hdr_w = QWidget()
-        hdr_h = QHBoxLayout(hdr_w)
-        hdr_h.setContentsMargins(12, 0, 12, 0)
-        title = QLabel("Test Harness")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        hdr_h.addWidget(title)
-        v.addWidget(hdr_w)
+        v.setContentsMargins(0, 0, 0, 0)
 
         self._panel = TestPanel(central)
         v.addWidget(self._panel, stretch=1)
 
-        QTimer.singleShot(100, lambda: threading.Thread(target=self._panel.connect, daemon=True).start())
+        QTimer.singleShot(100, lambda: threading.Thread(
+            target=self._panel.connect, daemon=True).start())
 
     def closeEvent(self, event) -> None:
         self._panel.disconnect()

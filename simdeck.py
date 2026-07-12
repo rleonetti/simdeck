@@ -13,19 +13,19 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
 import psutil
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize
 from PySide6.QtGui import QColor, QPalette, QPainter, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QTabWidget,
+    QApplication, QMainWindow, QWidget, QTabWidget, QTabBar,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSlider, QCheckBox, QComboBox, QPushButton, QLineEdit,
-    QFrame, QScrollArea, QDialog, QDialogButtonBox,
+    QFrame, QScrollArea, QDialog, QDialogButtonBox, QColorDialog,
 )
 from PIL import Image, ImageDraw
 import pystray
@@ -254,7 +254,155 @@ def _make_window_icon() -> QIcon:
     return QIcon(pix)
 
 
-def _apply_dark_theme(app: QApplication) -> None:
+_APP_STYLESHEET_TPL = """
+QPushButton {
+    border-radius: 6px;
+    padding: 4px 10px;
+    border: 1px solid #404040;
+    background-color: #2e2e2e;
+}
+QPushButton:hover   { background-color: #383838; border-color: #525252; }
+QPushButton:pressed { background-color: #262626; }
+QPushButton:disabled { color: #505050; border-color: #333333; }
+
+QLineEdit {
+    border-radius: 5px;
+    border: 1px solid #404040;
+    padding: 4px 8px;
+    background-color: #222222;
+}
+QLineEdit:focus { border-color: %%DARK%%; }
+
+QComboBox {
+    border-radius: 5px;
+    border: 1px solid #404040;
+    padding: 3px 8px;
+    background-color: #222222;
+}
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox:hover { border-color: #525252; }
+QComboBox QAbstractItemView {
+    background-color: #222222;
+    border: 1px solid #404040;
+    selection-background-color: %%DARK%%;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #353535;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: %%DARK%%;
+    border: none;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+QSlider::sub-page:horizontal {
+    background: %%DARK%%;
+    border-radius: 2px;
+}
+
+QCheckBox::indicator {
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+    border: 1.5px solid #555555;
+    background-color: #252525;
+}
+QCheckBox::indicator:hover {
+    border-color: #888888;
+}
+QCheckBox::indicator:checked {
+    background-color: %%DARK%%;
+    border-color: %%DARK%%;
+    image: url(assets/check.svg);
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #404040;
+    border-radius: 3px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical  { height: 0; }
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical  { background: transparent; }
+
+QHeaderView::section {
+    background-color: #242424;
+    color: #888888;
+    border: none;
+    border-bottom: 1px solid #333333;
+    border-right: 1px solid #2a2a2a;
+    padding: 5px 8px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* Restore panel borders — native Fusion stops drawing StyledPanel frames once any stylesheet is active */
+QFrame#sd_panel {
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;
+}
+
+QTabWidget::pane { border: none; }
+
+QTabBar#sub_tab_bar { background: transparent; }
+QTabBar#sub_tab_bar::tab {
+    background: transparent;
+    color: #777777;
+    border-radius: 5px;
+    padding: 5px 16px;
+    margin: 3px 2px;
+    border: none;
+}
+QTabBar#sub_tab_bar::tab:selected {
+    background: #2c2c2c;
+    color: #d5d5d5;
+}
+QTabBar#sub_tab_bar::tab:hover:!selected {
+    background: #252525;
+    color: #aaaaaa;
+}
+
+QTabBar#main_tab_bar { background: #1c1c1c; }
+QTabBar#main_tab_bar::tab {
+    background: #1c1c1c;
+    color: #757575;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 13px 0 10px 0;
+    margin: 0;
+}
+QTabBar#main_tab_bar::tab:selected {
+    color: %%ACCENT%%;
+    border-bottom: 3px solid %%ACCENT%%;
+    background: #1e1e1e;
+}
+QTabBar#main_tab_bar::tab:hover:!selected {
+    color: #b0b0b0;
+    background: #202020;
+    border-bottom: 3px solid #404040;
+}
+"""
+
+
+def _build_stylesheet(accent: str = "#f0a500") -> str:
+    dark = QColor(accent).darker(125).name()
+    return _APP_STYLESHEET_TPL.replace("%%ACCENT%%", accent).replace("%%DARK%%", dark)
+
+
+def _apply_dark_theme(app: QApplication, accent: str = "#f0a500") -> None:
     app.setStyle("Fusion")
     p = QPalette()
     p.setColor(QPalette.ColorRole.Window,          QColor(28, 28, 28))
@@ -273,6 +421,7 @@ def _apply_dark_theme(app: QApplication) -> None:
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(100, 100, 100))
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(100, 100, 100))
     app.setPalette(p)
+    app.setStyleSheet(_build_stylesheet(accent))
 
 
 class _UISignal(QObject):
@@ -287,6 +436,61 @@ class _UISignal(QObject):
 class _NoScrollSlider(QSlider):
     def wheelEvent(self, event) -> None:
         event.ignore()
+
+
+class _MainTabBar(QTabBar):
+    """Full-width proportional tab bar: last tab (Settings) gets ~25%, rest share ~75%."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setExpanding(False)
+        self.setDrawBase(False)
+        self.setObjectName("main_tab_bar")
+
+    def _avail(self) -> int:
+        p = self.parentWidget()
+        w = (p.width() if p and p.width() > 0 else 0) or self.width()
+        return w or 860
+
+    def tabSizeHint(self, index: int) -> QSize:
+        n = self.count()
+        if n == 0:
+            return super().tabSizeHint(index)
+        total = self._avail()
+        h     = super().tabSizeHint(index).height()
+        if n == 1:
+            return QSize(total, h)
+        settings_w = max(150, total // 4)
+        other_w    = (total - settings_w) // (n - 1)
+        return QSize(settings_w if index == n - 1 else other_w, h)
+
+    def minimumTabSizeHint(self, index: int) -> QSize:
+        return self.tabSizeHint(index)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        n = self.count()
+        if n < 2:
+            return
+        painter = QPainter(self)
+        painter.setPen(QColor("#363636"))
+        r = self.tabRect(n - 1)
+        painter.drawLine(r.left(), 10, r.left(), self.height() - 10)
+        painter.end()
+
+
+class _MainTabWidget(QTabWidget):
+    """QTabWidget backed by a full-width proportional tab bar."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setTabBar(_MainTabBar())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.tabBar().updateGeometry()
+        self.tabBar().update()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -358,6 +562,7 @@ class LIFXTab(QWidget):
         # ── Left: lights list ──────────────────────────────────────────────
         left_f = QFrame()
         left_f.setFrameShape(QFrame.Shape.StyledPanel)
+        left_f.setObjectName("sd_panel")
         left_l = QVBoxLayout(left_f)
         left_l.setContentsMargins(10, 8, 10, 8)
         left_l.setSpacing(0)
@@ -407,18 +612,21 @@ class LIFXTab(QWidget):
         body.addWidget(left_f)
 
         # ── Right: scrollable settings ─────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.StyledPanel)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.StyledPanel)
+        self._scroll.setObjectName("sd_panel")
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         right_w = QWidget()
+        self._scroll_content = right_w
         right   = QVBoxLayout(right_w)
         right.setContentsMargins(0, 0, 4, 8)
         right.setSpacing(0)
         right.setAlignment(Qt.AlignmentFlag.AlignTop)
-        scroll.setWidget(right_w)
-        body.addWidget(scroll, stretch=1)
+        self._scroll.setWidget(right_w)
+        body.addWidget(self._scroll, stretch=1)
+        scroll = self._scroll  # keep local alias for rest of _build
 
         # EFFECTS toggles — 2 per row
         self._section(right, "EFFECTS")
@@ -762,7 +970,7 @@ class LIFXTab(QWidget):
         assignments = self._compute_assignments()
         for name, lbl in self._light_effect_labels.items():
             effects_for = assignments.get(name, [])
-            lbl.setText(" · ".join(e.replace("_", " ") for e in effects_for))
+            lbl.setText("\n".join(e.replace("_", " ") for e in effects_for))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -787,25 +995,18 @@ class TestTab(QWidget):
         hdr_w = QWidget()
         hdr_h = QHBoxLayout(hdr_w)
         hdr_h.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("Test Harness")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        hdr_h.addWidget(title)
+        desc = QLabel("Pauses the live engine and drives LIFX directly with simulated telemetry.")
+        desc.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        desc.setWordWrap(True)
+        hdr_h.addWidget(desc, stretch=1)
         self._dot = QLabel("●")
-        self._dot.setStyleSheet(f"color: {_GREY}; font-size: 20px;")
+        self._dot.setStyleSheet(f"color: {_GREY}; font-size: 18px;")
         hdr_h.addWidget(self._dot)
-        hdr_h.addStretch()
         self._toggle_btn = QPushButton("Activate")
-        self._toggle_btn.setFixedWidth(110)
+        self._toggle_btn.setFixedWidth(100)
         self._toggle_btn.clicked.connect(self._toggle)
         hdr_h.addWidget(self._toggle_btn)
         v.addWidget(hdr_w)
-
-        desc = QLabel(
-            "Activating test mode stops the live engine and connects directly to LIFX for animation testing."
-        )
-        desc.setStyleSheet(f"color: {_MUTED};")
-        desc.setWordWrap(True)
-        v.addWidget(desc)
 
         self._panel_frame = QWidget()
         pf_v = QVBoxLayout(self._panel_frame)
@@ -828,7 +1029,8 @@ class TestTab(QWidget):
         self._dot.setStyleSheet(f"color: {_YELLOW}; font-size: 20px;")
 
         from test_harness import TestPanel
-        self._panel = TestPanel(self._panel_frame, self._ui)
+        self._panel = TestPanel(self._panel_frame, self._ui,
+                                get_effect_kwargs=self._get_effect_kwargs)
         self._panel_frame.layout().addWidget(self._panel)
 
         def _do() -> None:
@@ -956,6 +1158,7 @@ class SplitterTab(QWidget):
         self._port_entry = QLineEdit()
         self._port_entry.setText(str(s["splitter_port"]))
         self._port_entry.setFixedWidth(80)
+        self._port_entry.textChanged.connect(lambda _: self._on_change())
         port_h.addWidget(self._port_entry)
         port_h.addStretch()
         v.addWidget(port_w)
@@ -989,6 +1192,7 @@ class SplitterTab(QWidget):
 
         self._targets_frame = QFrame()
         self._targets_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._targets_frame.setObjectName("sd_panel")
         self._targets_layout = QVBoxLayout(self._targets_frame)
         self._targets_layout.setContentsMargins(10, 6, 10, 6)
         self._targets_layout.setSpacing(2)
@@ -1068,7 +1272,7 @@ class SplitterTab(QWidget):
         port_e.setPlaceholderText("Port")
         if port:
             port_e.setText(str(port))
-        port_e.setFixedWidth(60)
+        port_e.setFixedWidth(75)
         row_h.addWidget(port_e)
 
         lbl_e = QLineEdit()
@@ -1079,10 +1283,9 @@ class SplitterTab(QWidget):
         row_h.addWidget(lbl_e)
 
         games_btn = QPushButton(_games_btn_text(row_games))
-        games_btn.setFixedWidth(110)
-        row_h.addWidget(games_btn)
+        games_btn.setMinimumWidth(140)
+        row_h.addWidget(games_btn, stretch=1)
 
-        row_h.addStretch()
 
         entry = {
             "widget":  row_w,
@@ -1114,18 +1317,35 @@ class SplitterTab(QWidget):
 
         en_cb.stateChanged.connect(_set_enabled)
 
+        for field in (ip_e, port_e, lbl_e):
+            field.textChanged.connect(lambda _: self._on_change())
+
         if not enabled:
             for f in entry["fields"]:
                 f.setEnabled(False)
 
-        def remove(e=entry):
+        def remove(_, e=entry):
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, "Remove target",
+                f"Remove {e['ip'].text() or 'this'} : {e['port'].text() or '?'} ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
             e["removed"] = True
             e["widget"].setParent(None)
             self._on_change()
 
         rm_btn = QPushButton("✕")
         rm_btn.setFixedWidth(28)
-        rm_btn.setStyleSheet("QPushButton { background: transparent; } QPushButton:hover { background: #442222; }")
+        rm_btn.setToolTip("Remove this target")
+        rm_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: 1px solid transparent;"
+            " padding: 0; color: #777777; border-radius: 4px; }"
+            " QPushButton:hover { background: #442222; border-color: #663333; color: #ffaaaa; }"
+        )
         rm_btn.clicked.connect(remove)
         row_h.addWidget(rm_btn)
 
@@ -1302,6 +1522,7 @@ class LoggerTab(QWidget):
                   return_hdr: bool = False) -> "QLabel | tuple[QLabel, QLabel]":
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setObjectName("sd_panel")
         v = QVBoxLayout(frame)
         v.setContentsMargins(10, 6, 10, 6)
         v.setSpacing(2)
@@ -1684,12 +1905,14 @@ class SettingsTab(QWidget):
                  on_font_change: Callable[[int], None],
                  on_check_update: Callable[[], None],
                  on_startup_change: Callable[[bool, bool], None],
-                 on_simhub_change: Callable[[str, int], None]) -> None:
+                 on_simhub_change: Callable[[str, int], None],
+                 on_accent_change: Callable[[str], None] | None = None) -> None:
         super().__init__()
         self._on_font_change    = on_font_change
         self._on_check_update   = on_check_update
         self._on_startup_change = on_startup_change
         self._on_simhub_change  = on_simhub_change
+        self._on_accent_change  = on_accent_change or (lambda _: None)
         self._build(settings)
 
     def _build(self, settings: dict) -> None:
@@ -1732,6 +1955,28 @@ class SettingsTab(QWidget):
         cv.addSpacing(4)
         cv.addWidget(hint)
         self._font_slider.valueChanged.connect(self._on_font_slider)
+
+        cv.addSpacing(12)
+        accent_row = QHBoxLayout()
+        accent_row.setSpacing(10)
+        accent_lbl = QLabel("Accent color")
+        accent_lbl.setFixedWidth(100)
+        accent_row.addWidget(accent_lbl)
+
+        self._accent_swatch = QPushButton()
+        self._accent_swatch.setFixedSize(64, 26)
+        self._accent_swatch.setToolTip("Click to choose accent color")
+        self._accent_swatch.clicked.connect(self._pick_accent)
+        accent_row.addWidget(self._accent_swatch)
+
+        accent_hint = QLabel("Color for sliders, checkboxes and the active tab.")
+        accent_hint.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        accent_row.addWidget(accent_hint)
+        accent_row.addStretch()
+        cv.addLayout(accent_row)
+
+        self._accent_color = settings.get("accent_color", "#f0a500")
+        self._update_accent_swatch()
 
         # ── UPDATES ───────────────────────────────────────────────────────────
         cv.addSpacing(16)
@@ -1839,6 +2084,21 @@ class SettingsTab(QWidget):
         sep.setStyleSheet(f"color: {_GREY};")
         return sep
 
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _update_accent_swatch(self) -> None:
+        self._accent_swatch.setStyleSheet(
+            f"background-color: {self._accent_color}; border-radius: 4px;"
+            f" border: 1px solid #555555; padding: 0;"
+        )
+
+    def _pick_accent(self, _=None) -> None:
+        color = QColorDialog.getColor(QColor(self._accent_color), self, "Choose Accent Color")
+        if color.isValid():
+            self._accent_color = color.name()
+            self._update_accent_swatch()
+            self._on_accent_change(self._accent_color)
+
     # ── slots ─────────────────────────────────────────────────────────────────
 
     def _on_font_slider(self, value: int) -> None:
@@ -1918,6 +2178,7 @@ class SimDeckApp(QMainWindow):
         # Non-tab settings kept in sync with settings.json
         self._app_settings: dict = {
             "font_size_pt":    settings.get("font_size_pt",    10),
+            "accent_color":    settings.get("accent_color",    "#f0a500"),
             "start_minimized": settings.get("start_minimized", False),
             "simhub_host":     settings.get("simhub_host",     config.SIMHUB_HOST),
             "simhub_port":     settings.get("simhub_port",     config.SIMHUB_PORT),
@@ -1937,14 +2198,16 @@ class SimDeckApp(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_v = QVBoxLayout(central)
-        main_v.setContentsMargins(10, 10, 10, 0)
+        main_v.setContentsMargins(0, 0, 0, 0)
         main_v.setSpacing(0)
 
-        main_tabs = QTabWidget()
+        main_tabs = _MainTabWidget()
         main_v.addWidget(main_tabs, stretch=1)
 
         # ── Light Control ──────────────────────────────────────────────────
         light_tabs = QTabWidget()
+        light_tabs.tabBar().setObjectName("sub_tab_bar")
+        light_tabs.tabBar().setDrawBase(False)
 
         self._lifx_tab = LIFXTab(
             engine=self._engine,
@@ -1965,6 +2228,8 @@ class SimDeckApp(QMainWindow):
 
         # ── Lap Logs ───────────────────────────────────────────────────────
         lap_tabs = QTabWidget()
+        lap_tabs.tabBar().setObjectName("sub_tab_bar")
+        lap_tabs.tabBar().setDrawBase(False)
 
         self._logger_tab = LoggerTab(self._logger, self._ui)
         lap_tabs.addTab(self._logger_tab, "Logger")
@@ -1981,6 +2246,7 @@ class SimDeckApp(QMainWindow):
             on_check_update=self._manual_update_check,
             on_startup_change=self._on_startup_change,
             on_simhub_change=self._on_simhub_change,
+            on_accent_change=self._on_accent_change,
         )
         main_tabs.addTab(self._settings_tab, "Settings")
 
@@ -2019,6 +2285,20 @@ class SimDeckApp(QMainWindow):
 
         threading.Thread(target=self._bg_update_check, daemon=True).start()
 
+        QTimer(self).singleShot(0, self._fit_to_content)
+
+    # ── sizing ────────────────────────────────────────────────────────────────
+
+    def _fit_to_content(self) -> None:
+        """Expand the window height so the LIFX scroll area needs no scrollbar."""
+        content_h  = self._lifx_tab._scroll_content.sizeHint().height()
+        viewport_h = self._lifx_tab._scroll.viewport().height()
+        deficit    = content_h - viewport_h
+        if deficit > 0:
+            screen_h = QApplication.primaryScreen().availableGeometry().height()
+            new_h    = min(self.height() + deficit + 16, screen_h - 60)
+            self.resize(self.width(), new_h)
+
     # ── settings ──────────────────────────────────────────────────────────────
 
     def _save_settings(self) -> None:
@@ -2031,6 +2311,11 @@ class SimDeckApp(QMainWindow):
     def _on_font_change_setting(self, size_pt: int) -> None:
         _apply_font_size(size_pt)
         self._app_settings["font_size_pt"] = size_pt
+        self._save_settings()
+
+    def _on_accent_change(self, color: str) -> None:
+        self._app_settings["accent_color"] = color
+        QApplication.instance().setStyleSheet(_build_stylesheet(color))
         self._save_settings()
 
     def _on_startup_change(self, launch: bool, minimized: bool) -> None:
@@ -2146,6 +2431,7 @@ class SimDeckApp(QMainWindow):
         self._tray.run_detached()
 
     def _quit(self) -> None:
+        self._save_settings()
         self._poll_timer.stop()
         self._game_timer.stop()
         self._engine.stop()
@@ -2165,7 +2451,8 @@ class SimDeckApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    _apply_dark_theme(app)
+    _init_accent = settings_manager.load().get("accent_color", "#f0a500")
+    _apply_dark_theme(app, _init_accent)
     window = SimDeckApp()
     if not window.start_minimized:
         window.show()
