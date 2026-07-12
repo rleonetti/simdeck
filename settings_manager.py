@@ -32,6 +32,16 @@ DEFAULTS: dict = {
         {"ip": "127.0.0.1", "port": 20066, "label": "Moza Pit House", "enabled": True},
         {"ip": "127.0.0.1", "port": 8000,  "label": "SimHub",         "enabled": True},
     ],
+    # Per-flag enable/disable
+    "flags_enabled": {
+        "flag_yellow":    True,
+        "flag_red":       True,
+        "flag_blue":      True,
+        "flag_white":     True,
+        "flag_green":     True,
+        "flag_checkered": True,
+        "flag_black":     True,
+    },
     # App-level settings
     "font_size_pt":    10,
     "start_minimized": False,

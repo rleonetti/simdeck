@@ -379,14 +379,18 @@ class BrakeLightsEffect:
 
 # Evaluated highest-priority first. Each entry: (hue, sat, kelvin, flash_interval_s)
 # flash_interval=0 means solid (no flashing).
-_FLAG_PRIORITY = ["flag_black", "flag_red", "flag_blue", "flag_yellow", "flag_white", "flag_checkered"]
+_FLAG_PRIORITY = [
+    "flag_black", "flag_red", "flag_blue", "flag_yellow",
+    "flag_white", "flag_checkered", "flag_green",
+]
 _FLAG_SPECS: dict[str, tuple[int, int, int, float]] = {
-    "flag_black":     (HUE_RED,    HSBK_MAX, 3500, 0.15),  # rapid red  — penalty/DSQ
-    "flag_red":       (HUE_RED,    HSBK_MAX, 3500, 0.0),   # solid red  — session stopped
-    "flag_blue":      (HUE_BLUE,   HSBK_MAX, 6500, 0.2),   # fast blue  — let faster car past
+    "flag_black":     (HUE_RED,    HSBK_MAX, 3500, 0.15),  # rapid red   — penalty/DSQ
+    "flag_red":       (HUE_RED,    HSBK_MAX, 3500, 0.0),   # solid red   — session stopped
+    "flag_blue":      (HUE_BLUE,   HSBK_MAX, 6500, 0.2),   # fast blue   — let faster car past
     "flag_yellow":    (HUE_YELLOW, HSBK_MAX, 3500, 0.5),   # slow yellow — caution
     "flag_white":     (0,          0,        9000, 1.0),   # slow white  — last lap
     "flag_checkered": (0,          0,        9000, 0.25),  # fast white  — finish
+    "flag_green":     (HUE_GREEN,  HSBK_MAX, 3500, 0.0),   # solid green — race start/restart
 }
 
 
@@ -411,11 +415,13 @@ class FlagEffect:
         rig: LightRig,
         flag_lights: list[str] | None = None,
         flag_max_brightness: float = 1.0,
+        enabled_flags: list[str] | None = None,
         **_,
     ):
         names = flag_lights or []
         self._lights = [rig.get(n) for n in names if rig.get(n)]
         self._brightness = max(0.0, min(1.0, flag_max_brightness))
+        self._enabled: set[str] | None = set(enabled_flags) if enabled_flags is not None else None
         self._flash_on = False
         self._last_flash = 0.0
         self._was_active = False
@@ -423,6 +429,8 @@ class FlagEffect:
     def update(self, telemetry: dict) -> None:
         active_flag = None
         for key in _FLAG_PRIORITY:
+            if self._enabled is not None and key not in self._enabled:
+                continue
             if telemetry.get(key):
                 active_flag = key
                 break

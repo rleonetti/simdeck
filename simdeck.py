@@ -67,6 +67,38 @@ _PIT_LIGHTS_OPTIONS: dict[str, list[str]] = {
     "Both":           ["strip"] + list(config.BRAKE_LIGHTS),
 }
 
+_FLAG_ORDER: list[str] = [
+    "flag_yellow", "flag_red", "flag_blue", "flag_white",
+    "flag_green", "flag_checkered", "flag_black",
+]
+_FLAG_DISPLAY: dict[str, str] = {
+    "flag_yellow":    "Yellow",
+    "flag_red":       "Red",
+    "flag_blue":      "Blue",
+    "flag_white":     "White",
+    "flag_green":     "Green",
+    "flag_checkered": "Checkered",
+    "flag_black":     "Black (penalty)",
+}
+_FLAG_DESC: dict[str, str] = {
+    "flag_yellow":    "Caution, no overtaking",
+    "flag_red":       "Session stopped",
+    "flag_blue":      "Let faster car through",
+    "flag_white":     "Slow vehicle / last lap",
+    "flag_green":     "Race start or restart",
+    "flag_checkered": "Session finished",
+    "flag_black":     "Penalty / disqualification",
+}
+_FLAG_DOT_COLOR: dict[str, str] = {
+    "flag_yellow":    "#f0c000",
+    "flag_red":       "#e74c3c",
+    "flag_blue":      "#3b82f6",
+    "flag_white":     "#cccccc",
+    "flag_green":     "#2ecc71",
+    "flag_checkered": "#cccccc",
+    "flag_black":     "#e74c3c",
+}
+
 # ── Game auto-target feature ──────────────────────────────────────────────────
 # Set False to disable entirely — targets revert to manual checkbox control.
 _AUTO_GAME_TARGETS = True
@@ -475,12 +507,41 @@ class LIFXTab(QWidget):
         right.addWidget(brake_group)
         self._effect_groups["brake_lights"] = (brake_hdr, brake_group)
 
-        # FLAG EFFECT
-        flag_hdr   = self._section(right, "FLAG EFFECT")
+        # FLAGS — per-flag enable/disable with colored indicators
+        flag_hdr   = self._section(right, "FLAGS")
         flag_group = QWidget()
         flag_v     = QVBoxLayout(flag_group)
         flag_v.setContentsMargins(10, 0, 10, 4)
-        flag_v.setSpacing(3)
+        flag_v.setSpacing(5)
+
+        flags_enabled = s.get("flags_enabled", {})
+        self._flag_checks: dict[str, QCheckBox] = {}
+        for key in _FLAG_ORDER:
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setSpacing(6)
+
+            cb = QCheckBox()
+            cb.setChecked(flags_enabled.get(key, True))
+            row_h.addWidget(cb)
+
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color: {_FLAG_DOT_COLOR[key]}; font-size: 16px;")
+            row_h.addWidget(dot)
+
+            name_lbl = QLabel(_FLAG_DISPLAY[key])
+            name_lbl.setFixedWidth(110)
+            row_h.addWidget(name_lbl)
+
+            desc_lbl = QLabel(_FLAG_DESC[key])
+            desc_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+            row_h.addWidget(desc_lbl)
+            row_h.addStretch()
+
+            flag_v.addWidget(row_w)
+            self._flag_checks[key] = cb
+
         self._flag_bri = self._slider(flag_v, "Brightness %", s.get("flag_brightness_pct", 100), 0, 100)
         right.addWidget(flag_group)
         self._effect_groups["flag_effect"] = (flag_hdr, flag_group)
@@ -572,6 +633,8 @@ class LIFXTab(QWidget):
         for cb in (self._mode_combo, self._scheme_combo, self._led_step_combo, self._pit_lights_combo):
             cb.currentTextChanged.connect(lambda _: self._on_change())
         self._reversed_cb.stateChanged.connect(lambda _: self._on_change())
+        for cb in self._flag_checks.values():
+            cb.stateChanged.connect(lambda _: self._on_change())
         for name, cb in self._effect_checks.items():
             def _make_toggle(nm, c):
                 def _on_toggle(_):
@@ -616,6 +679,7 @@ class LIFXTab(QWidget):
             "brake_max_brightness":       self._brake_bri.value() / 100.0,
             "flag_lights":                config.FLAG_LIGHTS,
             "flag_max_brightness":        self._flag_bri.value() / 100.0,
+            "enabled_flags":              [k for k, cb in self._flag_checks.items() if cb.isChecked()],
             "pit_limiter_lights":         _PIT_LIGHTS_OPTIONS.get(self._pit_lights_combo.currentText(), ["strip"]),
             "pit_limiter_brightness":     self._pit_bri.value() / 100.0,
             "pit_limiter_flash_interval": config.PIT_LIMITER_FLASH_INTERVAL,
@@ -634,6 +698,7 @@ class LIFXTab(QWidget):
             "brake_threshold_pct":        self._brake_thr.value(),
             "brake_brightness_pct":       self._brake_bri.value(),
             "flag_brightness_pct":        self._flag_bri.value(),
+            "flags_enabled":              {k: cb.isChecked() for k, cb in self._flag_checks.items()},
             "pit_limiter_lights_label":   self._pit_lights_combo.currentText(),
             "pit_limiter_brightness_pct": self._pit_bri.value(),
         }
