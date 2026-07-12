@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -1058,8 +1058,11 @@ class _LightEditDialog(QDialog):
 class _LightScanDialog(QDialog):
     """Discover LIFX lights on the LAN and add them to the registry."""
 
+    _scan_done = Signal(list)
+
     def __init__(self, parent=None, existing_names: list[str] | None = None) -> None:
         super().__init__(parent)
+        self._scan_done.connect(self._finish_scan)
         self.setWindowTitle("Scan for LIFX Lights")
         self.setMinimumWidth(480)
         self.setMinimumHeight(360)
@@ -1138,12 +1141,10 @@ class _LightScanDialog(QDialog):
             self._scan_status_text = f"Scan failed: {exc}"
         else:
             self._scan_status_text = f"Found {len(result)} light(s)." if result else "No lights found."
-        self._discovered = result
-        # Update UI on main thread
-        from PySide6.QtCore import QMetaObject, Qt
-        QMetaObject.invokeMethod(self, "_finish_scan", Qt.ConnectionType.QueuedConnection)
+        self._scan_done.emit(result)
 
-    def _finish_scan(self) -> None:
+    def _finish_scan(self, result: list) -> None:
+        self._discovered = result
         self._scan_btn.setEnabled(True)
         self._scan_status.setText(getattr(self, "_scan_status_text", ""))
         self._list.clear()
@@ -2799,17 +2800,17 @@ class SimDeckApp(QMainWindow):
         )
         light_tabs.addTab(self._lifx_tab, "LIFX Effects")
 
-        self._splitter_tab = SplitterTab(self._splitter, settings, self._save_settings)
-        light_tabs.addTab(self._splitter_tab, "UDP Splitter")
-
-        self._test_tab = TestTab(self._engine, self._lifx_tab.get_effect_kwargs, self._ui)
-        light_tabs.addTab(self._test_tab, "Test")
-
         self._lights_tab = LightsTab(
             settings=settings,
             on_change=self._on_lights_change,
         )
         light_tabs.addTab(self._lights_tab, "Lights")
+
+        self._splitter_tab = SplitterTab(self._splitter, settings, self._save_settings)
+        light_tabs.addTab(self._splitter_tab, "UDP Splitter")
+
+        self._test_tab = TestTab(self._engine, self._lifx_tab.get_effect_kwargs, self._ui)
+        light_tabs.addTab(self._test_tab, "Test")
 
         main_tabs.addTab(light_tabs, "Light Control")
 

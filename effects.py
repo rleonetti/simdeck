@@ -108,7 +108,7 @@ class RevCounterEffect:
 
     @classmethod
     def needed_lights(cls, rev_counter_lights=None, **_) -> list[str]:
-        return list(rev_counter_lights or ["strip"])
+        return list(rev_counter_lights) if rev_counter_lights is not None else ["strip"]
 
     def __init__(
         self,
@@ -126,7 +126,8 @@ class RevCounterEffect:
         color_scheme: str = "classic",
         **_,
     ):
-        self.controller = rig.get((rev_counter_lights or ["strip"])[0])
+        _strip_name = rev_counter_lights[0] if rev_counter_lights else ("strip" if rev_counter_lights is None else None)
+        self.controller = rig.get(_strip_name) if _strip_name else None
         self.start_rpm = start_rpm
         self.start_threshold = start_threshold
         self.redline_threshold = redline_threshold

@@ -1,5 +1,5 @@
 """
-Persists user settings to %APPDATA%\SimDeck\settings.json.
+Persists user settings to %APPDATA%/SimDeck/settings.json.
 
 config.py provides the defaults. Any key saved here overrides the default.
 The app writes immediately on every change — no Save button needed.
