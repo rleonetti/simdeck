@@ -20,7 +20,7 @@ _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 import psutil
 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize
-from PySide6.QtGui import QColor, QPalette, QPainter, QFont, QIcon, QPixmap
+from PySide6.QtGui import QColor, QPalette, QPainter, QFont, QIcon, QPixmap, QIntValidator
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QTabBar,
     QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -793,13 +793,31 @@ class LIFXTab(QWidget):
         sl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         row_h.addWidget(sl, stretch=1)
 
-        val_lbl = QLabel(str(value))
-        val_lbl.setFixedWidth(36)
-        val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        val_lbl.setStyleSheet(f"color: {_MUTED};")
-        row_h.addWidget(val_lbl)
+        val_edit = QLineEdit(str(value))
+        val_edit.setFixedWidth(40)
+        val_edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        val_edit.setValidator(QIntValidator(from_, to))
+        val_edit.setStyleSheet(
+            f"color: {_MUTED}; background: transparent; border: none;"
+            f" border-bottom: 1px solid transparent;"
+            f" padding: 0; margin: 0;"
+        )
+        row_h.addWidget(val_edit)
 
-        sl.valueChanged.connect(lambda v, vl=val_lbl: vl.setText(str(v)))
+        # Slider → edit
+        sl.valueChanged.connect(lambda v, ve=val_edit: ve.setText(str(v)))
+
+        # Edit → slider on Enter or focus-out
+        def _commit(ve=val_edit, s=sl):
+            txt = ve.text().strip()
+            try:
+                v = max(s.minimum(), min(s.maximum(), int(txt)))
+                s.setValue(v)
+            except ValueError:
+                ve.setText(str(s.value()))
+
+        val_edit.editingFinished.connect(_commit)
+
         layout.addWidget(row_w)
         return sl
 
@@ -814,7 +832,15 @@ class LIFXTab(QWidget):
             f"font-size: 19px; font-weight: bold; color: {color};"
             " padding-top: 12px; padding-bottom: 2px; padding-left: 10px;"
         )
-        group.setEnabled(enabled)
+        # Keep controls interactive so values can be pre-configured while the
+        # effect is disabled; just dim the group opacity as a visual indicator.
+        group.setEnabled(True)
+        group.setGraphicsEffect(None)
+        if not enabled:
+            from PySide6.QtWidgets import QGraphicsOpacityEffect
+            eff = QGraphicsOpacityEffect(group)
+            eff.setOpacity(0.45)
+            group.setGraphicsEffect(eff)
 
     # ── wiring ────────────────────────────────────────────────────────────────
 

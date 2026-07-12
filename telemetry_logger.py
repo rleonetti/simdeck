@@ -4,11 +4,14 @@ Telemetry logger — records lap times to SQLite.
 The caller drives everything by calling feed(telemetry) on each poll tick.
 Lap detection fires when current_lap increments and last_lap_time is valid.
 """
+import logging
 import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 _DB = Path.home() / "Documents" / "SimDeck" / "telemetry.db"
 
@@ -56,6 +59,7 @@ class TelemetryLogger:
         self._prev_lap: float | None = None
         self._prev_last_ms: int | None = None
         self._lap_ever_invalid  = False
+        self._prev_checkered    = False
         self._session_vehicle: str | None = None
         self._session_track:   str | None = None
         self.on_lap_recorded: Callable[[], None] | None = None
@@ -90,8 +94,9 @@ class TelemetryLogger:
             self._session_id   = None
             self._prev_lap     = None
             self._prev_last_ms = None
-            self._session_vehicle = None
-            self._session_track   = None
+            self._prev_checkered   = False
+            self._session_vehicle  = None
+            self._session_track    = None
 
     def delete_session(self, session_id: int) -> None:
         with self._lock:
@@ -134,6 +139,11 @@ class TelemetryLogger:
         last_ms   = _ms(last_secs) if last_secs else 0
         is_valid  = bool(telemetry.get("is_lap_valid", 1))
 
+        checkered      = bool(telemetry.get("flag_checkered", 0))
+        checkered_edge = checkered and not self._prev_checkered
+        self._prev_checkered = checkered
+
+
         # Accumulate: if validity ever drops during this lap, the whole lap is tainted.
         if not is_valid:
             self._lap_ever_invalid = True
@@ -162,6 +172,23 @@ class TelemetryLogger:
             valid = not self._lap_ever_invalid
             self._lap_ever_invalid = False   # reset for the new lap
             self._record_lap(int(prev_lap), last_ms, valid=valid)
+
+        # Checkered flag detection: catches single-lap races and the final lap of
+        # any race where the lap counter never increments past the finish line.
+        elif checkered_edge and last_ms != self._prev_last_ms:
+            if last_ms >= _MIN_VALID_LAP_MS:
+                # last_lap_time was populated at finish
+                self._prev_last_ms = last_ms
+                valid = not self._lap_ever_invalid
+                self._lap_ever_invalid = False
+                self._record_lap(int(cur_lap), last_ms, valid=valid)
+            else:
+                # Fallback: use current_lap_time (some games don't set last_lap_time)
+                cur_time_ms = _ms(telemetry.get("current_lap_time", 0.0))
+                if cur_time_ms >= _MIN_VALID_LAP_MS:
+                    valid = not self._lap_ever_invalid
+                    self._lap_ever_invalid = False
+                    self._record_lap(int(cur_lap), cur_time_ms, valid=valid)
 
     def _record_lap(self, lap_number: int, lap_ms: int, valid: bool = True) -> None:
         with self._lock:
