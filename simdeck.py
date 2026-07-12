@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -1060,7 +1060,8 @@ class _LightScanDialog(QDialog):
 
     _scan_done = Signal(list)
 
-    def __init__(self, parent=None, existing_names: list[str] | None = None) -> None:
+    def __init__(self, parent=None, existing_names: list[str] | None = None,
+                 known_ips: list[str] | None = None) -> None:
         super().__init__(parent)
         self._scan_done.connect(self._finish_scan)
         self.setWindowTitle("Scan for LIFX Lights")
@@ -1069,6 +1070,7 @@ class _LightScanDialog(QDialog):
         self.setModal(True)
 
         self._existing_names = existing_names or []
+        self._known_ips = known_ips or []
         self._discovered: list[dict] = []
         self._added: list[dict] = []
 
@@ -1123,24 +1125,50 @@ class _LightScanDialog(QDialog):
 
     def _do_scan(self) -> None:
         try:
+            import lifxlan.lifxlan as _mod
             from lifxlan import LifxLAN
-            lan = LifxLAN()
-            lights = lan.get_lights()
-            result = []
-            for light in lights:
+
+            result: list[dict] = []
+            seen: set[str] = set()
+
+            def _add_device(dev) -> None:
                 try:
+                    ip = dev.get_ip_addr()
+                    if ip in seen:
+                        return
+                    seen.add(ip)
                     result.append({
-                        "ip":    light.get_ip_addr(),
-                        "label": light.get_label() or "",
-                        "type":  "multizone" if light.supports_multizone() else "single",
+                        "ip":    ip,
+                        "label": dev.get_label() or "",
+                        "type":  "multizone" if dev.supports_multizone() else "single",
                     })
                 except Exception:
                     pass
+
+            # Broadcast discovery
+            try:
+                for dev in LifxLAN().get_lights():
+                    _add_device(dev)
+            except Exception:
+                pass
+
+            # Unicast fallback for each known IP (bypasses Windows Firewall blocking broadcast)
+            orig = _mod.UDP_BROADCAST_IP_ADDRS
+            for ip in self._known_ips:
+                if ip in seen:
+                    continue
+                _mod.UDP_BROADCAST_IP_ADDRS = [ip]
+                try:
+                    for dev in LifxLAN().get_devices():
+                        _add_device(dev)
+                except Exception:
+                    pass
+            _mod.UDP_BROADCAST_IP_ADDRS = orig
+
+            self._scan_status_text = f"Found {len(result)} light(s)." if result else "No lights found."
         except Exception as exc:
             result = []
             self._scan_status_text = f"Scan failed: {exc}"
-        else:
-            self._scan_status_text = f"Found {len(result)} light(s)." if result else "No lights found."
         self._scan_done.emit(result)
 
     def _finish_scan(self, result: list) -> None:
@@ -1483,7 +1511,9 @@ class LightsTab(QWidget):
         self._on_change()
 
     def _on_scan(self, _=None) -> None:
-        dlg = _LightScanDialog(self, existing_names=[l["name"] for l in self._lights])
+        dlg = _LightScanDialog(self,
+                               existing_names=[l["name"] for l in self._lights],
+                               known_ips=[l["ip"] for l in self._lights])
         dlg.exec()
         added = dlg.get_added()
         if not added:
@@ -2761,6 +2791,23 @@ class SimDeckApp(QMainWindow):
         effect_lights = settings.get("effect_lights", {
             "rev_counter": [], "brake_lights": [], "flag_effect": [], "pit_limiter": [],
         })
+
+        # One-time migration: seed registry from config_local.LIFX_LIGHTS
+        if not lights:
+            try:
+                import config_local  # type: ignore
+                legacy = getattr(config_local, "LIFX_LIGHTS", {})
+                if legacy:
+                    lights = [
+                        {"name": name, "ip": cfg["ip"],
+                         "type": "multizone" if "strip" in name else "single"}
+                        for name, cfg in legacy.items()
+                    ]
+                    settings["lights"] = lights
+                    settings_manager.save(settings)
+            except ImportError:
+                pass
+
         lights_config = {l["name"]: {"ip": l["ip"]} for l in lights}
 
         self._logger   = TelemetryLogger()
