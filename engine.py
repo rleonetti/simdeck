@@ -22,11 +22,13 @@ class Engine:
 
     def __init__(self,
                  simhub_host: str = config.SIMHUB_HOST,
-                 simhub_port: int = config.SIMHUB_PORT) -> None:
+                 simhub_port: int = config.SIMHUB_PORT,
+                 lights_config: dict | None = None) -> None:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
-        self._light_status: dict[str, str] = {n: "idle" for n in config.LIFX_LIGHTS}
+        self._lights_config: dict = lights_config if lights_config else {}
+        self._light_status: dict[str, str] = {n: "idle" for n in self._lights_config}
         self._simhub_status = "disconnected"
         self._rig: LightRig | None = None
         self._last_telemetry: dict = {}
@@ -42,7 +44,7 @@ class Engine:
         self._stop_event.clear()
         self._rig = None
         with self._lock:
-            for name in config.LIFX_LIGHTS:
+            for name in self._lights_config:
                 self._light_status[name] = "connecting"
             self._simhub_status = "connecting"
         self._thread = threading.Thread(
@@ -80,7 +82,7 @@ class Engine:
             self._thread.join(timeout=5)
         self._thread = None
         with self._lock:
-            for name in config.LIFX_LIGHTS:
+            for name in self._lights_config:
                 self._light_status[name] = "idle"
             self._simhub_status = "disconnected"
         if self._rig and self._rig.get("strip"):
@@ -116,6 +118,11 @@ class Engine:
                 "simhub": self._simhub_status,
             }
 
+    def update_lights_config(self, lights_config: dict) -> None:
+        self._lights_config = lights_config
+        with self._lock:
+            self._light_status = {n: self._light_status.get(n, "idle") for n in lights_config}
+
     # ----------------------------------------------------------------- private
 
     def _compute_needed(self, effect_kwargs: dict) -> set[str]:
@@ -136,7 +143,7 @@ class Engine:
             ctrl = self._rig.get(name)
             if ctrl is not None and ctrl.connected:
                 continue
-            cfg_entry = config.LIFX_LIGHTS.get(name, {})
+            cfg_entry = self._lights_config.get(name, {})
             if not cfg_entry:
                 continue
             if ctrl is None:
@@ -155,7 +162,7 @@ class Engine:
         needed = self._compute_needed(effect_kwargs)
 
         rig = LightRig()
-        for name, cfg_entry in config.LIFX_LIGHTS.items():
+        for name, cfg_entry in self._lights_config.items():
             if name not in needed:
                 with self._lock:
                     self._light_status[name] = "unused"
@@ -168,7 +175,7 @@ class Engine:
 
         results = rig.connect_all()
         with self._lock:
-            for name in config.LIFX_LIGHTS:
+            for name in self._lights_config:
                 if name not in needed:
                     self._light_status[name] = "unused"
                 elif results.get(name):
@@ -179,8 +186,7 @@ class Engine:
         self._rig = rig  # expose before entering poll loop so pause() can grab it
 
         if needed and not results.get("strip"):
-            logger.error("Strip failed to connect — engine stopping")
-            return
+            logger.warning("strip is needed but failed to connect — effects may not work")
 
         rig.power_on_all()
         self._poll_loop(effect_kwargs)

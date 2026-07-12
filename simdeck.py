@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSlider, QCheckBox, QComboBox, QPushButton, QLineEdit,
     QFrame, QScrollArea, QDialog, QDialogButtonBox, QColorDialog,
+    QListWidget,
 )
 from PIL import Image, ImageDraw
 import pystray
@@ -60,12 +61,6 @@ _SCHEME_LABELS = {
     "icy":     "Icy      (green → blue, white flash)",
 }
 _SCHEME_VALUES = {v: k for k, v in _SCHEME_LABELS.items()}
-
-_PIT_LIGHTS_OPTIONS: dict[str, list[str]] = {
-    "Strip":          ["strip"],
-    "Ceiling Lights": list(config.BRAKE_LIGHTS),
-    "Both":           ["strip"] + list(config.BRAKE_LIGHTS),
-}
 
 _FLAG_ORDER: list[str] = [
     "flag_yellow", "flag_red", "flag_blue", "flag_white",
@@ -509,6 +504,8 @@ class LIFXTab(QWidget):
         self,
         engine: Engine,
         settings: dict,
+        lights: list[dict],
+        light_assignments: dict,
         on_change: Callable,
         on_force_restart: Callable,
         ui: _UISignal,
@@ -518,6 +515,8 @@ class LIFXTab(QWidget):
         self._on_change        = on_change
         self._on_force_restart = on_force_restart
         self._ui               = ui
+        self._lights:            list[dict]       = list(lights)
+        self._light_assignments: dict             = dict(light_assignments)
         self._light_dots:          dict[str, QLabel]    = {}
         self._light_effect_labels: dict[str, QLabel]    = {}
         self._effect_checks:       dict[str, QCheckBox] = {}
@@ -588,34 +587,15 @@ class LIFXTab(QWidget):
         hdr_h.addStretch()
         left_l.addWidget(hdr_w)
 
-        for name in config.LIFX_LIGHTS:
-            cell_w = QWidget()
-            cell_v = QVBoxLayout(cell_w)
-            cell_v.setContentsMargins(0, 4, 0, 0)
-            cell_v.setSpacing(1)
-
-            nr_w = QWidget()
-            nr_h = QHBoxLayout(nr_w)
-            nr_h.setContentsMargins(0, 0, 0, 0)
-            nr_h.setSpacing(6)
-            dot = QLabel("●")
-            dot.setStyleSheet(f"color: {_GREY}; font-size: 18px;")
-            nr_h.addWidget(dot)
-            nm = QLabel(name)
-            nm.setStyleSheet("font-size: 18px;")
-            nr_h.addWidget(nm)
-            nr_h.addStretch()
-            cell_v.addWidget(nr_w)
-
-            eff_lbl = QLabel("")
-            eff_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px; padding-left: 22px;")
-            cell_v.addWidget(eff_lbl)
-
-            left_l.addWidget(cell_w)
-            self._light_dots[name]          = dot
-            self._light_effect_labels[name] = eff_lbl
+        self._lights_container = QWidget()
+        container_layout = QVBoxLayout(self._lights_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        left_l.addWidget(self._lights_container)
 
         left_l.addStretch()
+        self._lights_panel_layout = left_l
         body.addWidget(left_f)
 
         # ── Right: scrollable settings ─────────────────────────────────────
@@ -768,19 +748,6 @@ class LIFXTab(QWidget):
         pit_v     = QVBoxLayout(pit_group)
         pit_v.setContentsMargins(10, 0, 10, 4)
         pit_v.setSpacing(3)
-        pl_w = QWidget()
-        pl_h = QHBoxLayout(pl_w)
-        pl_h.setContentsMargins(0, 0, 0, 0)
-        pl_lbl = QLabel("Lights")
-        pl_lbl.setFixedWidth(120)
-        pl_h.addWidget(pl_lbl)
-        self._pit_lights_combo = QComboBox()
-        self._pit_lights_combo.addItems(list(_PIT_LIGHTS_OPTIONS.keys()))
-        self._pit_lights_combo.setCurrentText(s.get("pit_limiter_lights_label", "Strip"))
-        self._pit_lights_combo.setFixedWidth(160)
-        pl_h.addWidget(self._pit_lights_combo)
-        pl_h.addStretch()
-        pit_v.addWidget(pl_w)
         self._pit_bri = self._slider(pit_v, "Brightness %", s.get("pit_limiter_brightness_pct", 75), 0, 100)
         right.addWidget(pit_group)
         self._effect_groups["pit_limiter"] = (pit_hdr, pit_group)
@@ -791,6 +758,8 @@ class LIFXTab(QWidget):
         for name, cb in self._effect_checks.items():
             if name in self._effect_groups:
                 self._set_group_state(name, cb.isChecked())
+
+        self._rebuild_lights_panel()
 
     def _section(self, layout: QVBoxLayout, text: str) -> QLabel:
         self._section_count += 1
@@ -853,7 +822,7 @@ class LIFXTab(QWidget):
         for sl in (self._start_rpm, self._redline, self._strip_bri,
                    self._brake_thr, self._brake_bri, self._flag_bri, self._pit_bri):
             sl.valueChanged.connect(lambda _: self._on_change())
-        for cb in (self._mode_combo, self._scheme_combo, self._led_step_combo, self._pit_lights_combo):
+        for cb in (self._mode_combo, self._scheme_combo, self._led_step_combo):
             cb.currentTextChanged.connect(lambda _: self._on_change())
         self._reversed_cb.stateChanged.connect(lambda _: self._on_change())
         for cb in self._flag_checks.values():
@@ -897,13 +866,14 @@ class LIFXTab(QWidget):
             "strip_reversed":       self._reversed_cb.isChecked(),
             "strip_max_brightness": self._strip_bri.value() / 100.0,
             "color_scheme":         _SCHEME_VALUES.get(self._scheme_combo.currentText(), "classic"),
-            "brake_lights":               config.BRAKE_LIGHTS,
+            "rev_counter_lights":         self._light_assignments.get("rev_counter",  ["strip"]),
+            "brake_lights":               self._light_assignments.get("brake_lights", []),
             "brake_threshold":            self._brake_thr.value() / 100.0,
             "brake_max_brightness":       self._brake_bri.value() / 100.0,
-            "flag_lights":                config.FLAG_LIGHTS,
+            "flag_lights":                self._light_assignments.get("flag_effect",  []),
             "flag_max_brightness":        self._flag_bri.value() / 100.0,
             "enabled_flags":              [k for k, cb in self._flag_checks.items() if cb.isChecked()],
-            "pit_limiter_lights":         _PIT_LIGHTS_OPTIONS.get(self._pit_lights_combo.currentText(), ["strip"]),
+            "pit_limiter_lights":         self._light_assignments.get("pit_limiter",  ["strip"]),
             "pit_limiter_brightness":     self._pit_bri.value() / 100.0,
             "pit_limiter_flash_interval": config.PIT_LIMITER_FLASH_INTERVAL,
         }
@@ -922,9 +892,48 @@ class LIFXTab(QWidget):
             "brake_brightness_pct":       self._brake_bri.value(),
             "flag_brightness_pct":        self._flag_bri.value(),
             "flags_enabled":              {k: cb.isChecked() for k, cb in self._flag_checks.items()},
-            "pit_limiter_lights_label":   self._pit_lights_combo.currentText(),
             "pit_limiter_brightness_pct": self._pit_bri.value(),
         }
+
+    def update_lights(self, lights: list[dict], assignments: dict) -> None:
+        self._lights = list(lights)
+        self._light_assignments = dict(assignments)
+        self._rebuild_lights_panel()
+
+    def _rebuild_lights_panel(self) -> None:
+        self._light_dots = {}
+        self._light_effect_labels = {}
+        # Clear the container
+        lay = self._lights_container.layout()
+        while lay.count():
+            item = lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        # Rebuild from self._lights
+        for light in self._lights:
+            name = light["name"]
+            cell_w = QWidget()
+            cell_v = QVBoxLayout(cell_w)
+            cell_v.setContentsMargins(0, 4, 0, 0)
+            cell_v.setSpacing(1)
+            nr_w = QWidget()
+            nr_h = QHBoxLayout(nr_w)
+            nr_h.setContentsMargins(0, 0, 0, 0)
+            nr_h.setSpacing(6)
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color: {_GREY}; font-size: 18px;")
+            nr_h.addWidget(dot)
+            nm = QLabel(name)
+            nm.setStyleSheet("font-size: 18px;")
+            nr_h.addWidget(nm)
+            nr_h.addStretch()
+            cell_v.addWidget(nr_w)
+            eff_lbl = QLabel("")
+            eff_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px; padding-left: 22px;")
+            cell_v.addWidget(eff_lbl)
+            lay.addWidget(cell_w)
+            self._light_dots[name] = dot
+            self._light_effect_labels[name] = eff_lbl
 
     def _compute_assignments(self) -> dict[str, list[str]]:
         kwargs  = self.get_effect_kwargs()
@@ -978,6 +987,540 @@ class LIFXTab(QWidget):
         for name, lbl in self._light_effect_labels.items():
             effects_for = assignments.get(name, [])
             lbl.setText("\n".join(e.replace("_", " ") for e in effects_for))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lights tab — light registry + effect assignments
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _LightEditDialog(QDialog):
+    """Add or edit a single LIFX light entry."""
+
+    def __init__(self, parent=None, light: dict | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit Light" if light else "Add Light")
+        self.setMinimumWidth(340)
+        self.setModal(True)
+
+        form = QVBoxLayout(self)
+        form.setSpacing(10)
+
+        def _row(label: str, widget) -> QHBoxLayout:
+            h = QHBoxLayout()
+            lbl = QLabel(label)
+            lbl.setFixedWidth(60)
+            h.addWidget(lbl)
+            h.addWidget(widget)
+            return h
+
+        self._name = QLineEdit(light.get("name", "") if light else "")
+        self._name.setPlaceholderText("e.g. strip, front_right")
+        form.addLayout(_row("Name", self._name))
+
+        self._ip = QLineEdit(light.get("ip", "") if light else "")
+        self._ip.setPlaceholderText("192.168.x.x")
+        form.addLayout(_row("IP", self._ip))
+
+        self._type = QComboBox()
+        self._type.addItems(["LED Strip", "Bulb"])
+        if light and light.get("type") == "single":
+            self._type.setCurrentText("Bulb")
+        form.addLayout(_row("Type", self._type))
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        form.addWidget(btns)
+
+        self._status = QLabel("")
+        self._status.setStyleSheet("color: #cc4444; font-size: 13px;")
+        form.addWidget(self._status)
+
+    def _validate(self) -> None:
+        if not self._name.text().strip():
+            self._status.setText("Name is required.")
+            return
+        if not self._ip.text().strip():
+            self._status.setText("IP address is required.")
+            return
+        self.accept()
+
+    def result_light(self) -> dict:
+        return {
+            "name": self._name.text().strip(),
+            "ip":   self._ip.text().strip(),
+            "type": "multizone" if self._type.currentText() == "LED Strip" else "single",
+        }
+
+
+class _LightScanDialog(QDialog):
+    """Discover LIFX lights on the LAN and add them to the registry."""
+
+    def __init__(self, parent=None, existing_names: list[str] | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Scan for LIFX Lights")
+        self.setMinimumWidth(480)
+        self.setMinimumHeight(360)
+        self.setModal(True)
+
+        self._existing_names = existing_names or []
+        self._discovered: list[dict] = []
+        self._added: list[dict] = []
+
+        v = QVBoxLayout(self)
+        v.setSpacing(10)
+
+        top_h = QHBoxLayout()
+        self._scan_btn = QPushButton("Scan Network")
+        self._scan_btn.setFixedWidth(130)
+        self._scan_btn.clicked.connect(self._start_scan)
+        top_h.addWidget(self._scan_btn)
+        self._scan_status = QLabel("Click Scan to discover LIFX lights on your network.")
+        self._scan_status.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        self._scan_status.setWordWrap(True)
+        top_h.addWidget(self._scan_status, stretch=1)
+        v.addLayout(top_h)
+
+        self._list = QListWidget()
+        self._list.setMinimumHeight(160)
+        self._list.itemSelectionChanged.connect(self._on_selection)
+        v.addWidget(self._list)
+
+        name_h = QHBoxLayout()
+        name_h.addWidget(QLabel("Name:"))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Choose a name for this light")
+        name_h.addWidget(self._name_edit)
+        v.addLayout(name_h)
+        self._name_hint = QLabel("Select a discovered light above, then give it a name.")
+        self._name_hint.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        v.addWidget(self._name_hint)
+
+        btn_h = QHBoxLayout()
+        self._add_btn = QPushButton("Add to Registry")
+        self._add_btn.setEnabled(False)
+        self._add_btn.clicked.connect(self._add_selected)
+        btn_h.addWidget(self._add_btn)
+        self._added_lbl = QLabel("")
+        self._added_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 13px;")
+        btn_h.addWidget(self._added_lbl, stretch=1)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_h.addWidget(close_btn)
+        v.addLayout(btn_h)
+
+    def _start_scan(self) -> None:
+        self._scan_btn.setEnabled(False)
+        self._list.clear()
+        self._discovered = []
+        self._scan_status.setText("Scanning… (up to 5 seconds)")
+        threading.Thread(target=self._do_scan, daemon=True).start()
+
+    def _do_scan(self) -> None:
+        try:
+            from lifxlan import LifxLAN
+            lan = LifxLAN()
+            lights = lan.get_lights()
+            result = []
+            for light in lights:
+                try:
+                    result.append({
+                        "ip":    light.get_ip_addr(),
+                        "label": light.get_label() or "",
+                        "type":  "multizone" if light.supports_multizone() else "single",
+                    })
+                except Exception:
+                    pass
+        except Exception as exc:
+            result = []
+            self._scan_status_text = f"Scan failed: {exc}"
+        else:
+            self._scan_status_text = f"Found {len(result)} light(s)." if result else "No lights found."
+        self._discovered = result
+        # Update UI on main thread
+        from PySide6.QtCore import QMetaObject, Qt
+        QMetaObject.invokeMethod(self, "_finish_scan", Qt.ConnectionType.QueuedConnection)
+
+    def _finish_scan(self) -> None:
+        self._scan_btn.setEnabled(True)
+        self._scan_status.setText(getattr(self, "_scan_status_text", ""))
+        self._list.clear()
+        type_label = {"multizone": "Strip", "single": "Bulb"}
+        for d in self._discovered:
+            text = f"{d['label'] or d['ip']}  ·  {d['ip']}  ·  {type_label.get(d['type'], '')}"
+            self._list.addItem(text)
+
+    def _on_selection(self) -> None:
+        items = self._list.selectedItems()
+        if not items:
+            self._add_btn.setEnabled(False)
+            return
+        idx = self._list.row(items[0])
+        d = self._discovered[idx]
+        if not self._name_edit.text():
+            self._name_edit.setText(d.get("label", "").lower().replace(" ", "_") or "light")
+        self._add_btn.setEnabled(True)
+
+    def _add_selected(self) -> None:
+        items = self._list.selectedItems()
+        if not items:
+            return
+        idx = self._list.row(items[0])
+        d = self._discovered[idx]
+        name = self._name_edit.text().strip()
+        if not name:
+            return
+        self._added.append({"name": name, "ip": d["ip"], "type": d["type"]})
+        self._added_lbl.setText(f"Added: {name}")
+        self._name_edit.clear()
+        self._list.clearSelection()
+        self._add_btn.setEnabled(False)
+
+    def get_added(self) -> list[dict]:
+        return list(self._added)
+
+
+_EFFECT_LABELS = [
+    ("Rev Counter",  "rev_counter"),
+    ("Brake Lights", "brake_lights"),
+    ("Flag Effect",  "flag_effect"),
+    ("Pit Limiter",  "pit_limiter"),
+]
+
+
+class LightsTab(QWidget):
+    """Light registry (name/IP/type) and per-effect assignment checkboxes."""
+
+    def __init__(self, settings: dict, on_change: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_change   = on_change
+        self._lights:      list[dict] = list(settings.get("lights", []))
+        self._assignments: dict       = {
+            k: list(v) for k, v in settings.get("effect_lights", {
+                "rev_counter": [], "brake_lights": [], "flag_effect": [], "pit_limiter": [],
+            }).items()
+        }
+        self._status_dots:       dict[str, QLabel]    = {}
+        self._assign_checks:     dict[str, dict[str, QCheckBox]] = {}  # effect -> {name -> cb}
+        self._assign_section_layouts: dict[str, QVBoxLayout] = {}
+        self._build()
+
+    # ── build ─────────────────────────────────────────────────────────────────
+
+    def _build(self) -> None:
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(8)
+
+        # ── Left: registry ───────────────────────────────────────────────────
+        left_f = QFrame()
+        left_f.setFrameShape(QFrame.Shape.StyledPanel)
+        left_f.setObjectName("sd_panel")
+        left_f.setMinimumWidth(240)
+        left_f.setMaximumWidth(320)
+        left_v = QVBoxLayout(left_f)
+        left_v.setContentsMargins(10, 10, 10, 10)
+        left_v.setSpacing(6)
+
+        reg_hdr = QLabel("REGISTRY")
+        reg_hdr.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {_MUTED}; letter-spacing: 1px;")
+        left_v.addWidget(reg_hdr)
+
+        # Scrollable list of light rows
+        self._registry_scroll = QScrollArea()
+        self._registry_scroll.setWidgetResizable(True)
+        self._registry_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._registry_content = QWidget()
+        self._registry_layout  = QVBoxLayout(self._registry_content)
+        self._registry_layout.setContentsMargins(0, 0, 0, 0)
+        self._registry_layout.setSpacing(2)
+        self._registry_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._registry_scroll.setWidget(self._registry_content)
+        left_v.addWidget(self._registry_scroll, stretch=1)
+
+        # Buttons
+        btn_row1 = QHBoxLayout()
+        btn_row1.setSpacing(4)
+        self._add_btn  = QPushButton("+ Add")
+        self._edit_btn = QPushButton("Edit")
+        self._del_btn  = QPushButton("Remove")
+        self._add_btn.clicked.connect(self._on_add)
+        self._edit_btn.clicked.connect(self._on_edit)
+        self._del_btn.clicked.connect(self._on_remove)
+        for b in (self._add_btn, self._edit_btn, self._del_btn):
+            btn_row1.addWidget(b)
+        left_v.addLayout(btn_row1)
+
+        scan_btn = QPushButton("⊙  Scan Network")
+        scan_btn.clicked.connect(self._on_scan)
+        left_v.addWidget(scan_btn)
+
+        outer.addWidget(left_f)
+
+        # ── Right: assignments ───────────────────────────────────────────────
+        right_f = QFrame()
+        right_f.setFrameShape(QFrame.Shape.StyledPanel)
+        right_f.setObjectName("sd_panel")
+        right_v = QVBoxLayout(right_f)
+        right_v.setContentsMargins(10, 10, 10, 10)
+        right_v.setSpacing(6)
+
+        asgn_hdr = QLabel("EFFECT ASSIGNMENTS")
+        asgn_hdr.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {_MUTED}; letter-spacing: 1px;")
+        right_v.addWidget(asgn_hdr)
+
+        asgn_hint = QLabel("Choose which lights each effect controls.")
+        asgn_hint.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        right_v.addWidget(asgn_hint)
+
+        self._asgn_scroll = QScrollArea()
+        self._asgn_scroll.setWidgetResizable(True)
+        self._asgn_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._asgn_content = QWidget()
+        self._asgn_layout  = QVBoxLayout(self._asgn_content)
+        self._asgn_layout.setContentsMargins(0, 4, 0, 4)
+        self._asgn_layout.setSpacing(0)
+        self._asgn_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._asgn_scroll.setWidget(self._asgn_content)
+        right_v.addWidget(self._asgn_scroll, stretch=1)
+
+        outer.addWidget(right_f, stretch=1)
+
+        # Build initial rows
+        self._rebuild_registry()
+        self._rebuild_assignments()
+
+    # ── registry ──────────────────────────────────────────────────────────────
+
+    def _rebuild_registry(self) -> None:
+        self._selected_name: str | None = None
+        self._registry_rows: dict[str, QWidget] = {}
+        self._status_dots = {}
+
+        while self._registry_layout.count():
+            item = self._registry_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for light in self._lights:
+            self._add_registry_row(light)
+
+    def _add_registry_row(self, light: dict) -> None:
+        name = light["name"]
+        row  = QWidget()
+        row.setProperty("light_name", name)
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row_h = QHBoxLayout(row)
+        row_h.setContentsMargins(4, 4, 4, 4)
+        row_h.setSpacing(6)
+
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {_GREY}; font-size: 16px;")
+        row_h.addWidget(dot)
+
+        info_v = QVBoxLayout()
+        info_v.setSpacing(0)
+        nm_lbl = QLabel(name)
+        nm_lbl.setStyleSheet("font-size: 15px; font-weight: 600;")
+        info_v.addWidget(nm_lbl)
+        ip_lbl = QLabel(light.get("ip", ""))
+        ip_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 12px;")
+        info_v.addWidget(ip_lbl)
+        row_h.addLayout(info_v, stretch=1)
+
+        type_badge = QLabel("Strip" if light.get("type") == "multizone" else "Bulb")
+        type_badge.setStyleSheet(f"color: {_MUTED}; font-size: 12px;")
+        row_h.addWidget(type_badge)
+
+        row.mousePressEvent = lambda ev, n=name: self._select_row(n)
+        self._registry_layout.addWidget(row)
+        self._registry_rows[name] = row
+        self._status_dots[name]   = dot
+
+    def _select_row(self, name: str) -> None:
+        # Highlight selected row
+        for n, row in self._registry_rows.items():
+            row.setStyleSheet("background: #2a2a2a; border-radius: 4px;" if n == name else "")
+        self._selected_name = name
+
+    def _deselect_all(self) -> None:
+        for row in self._registry_rows.values():
+            row.setStyleSheet("")
+        self._selected_name = None
+
+    # ── assignments ───────────────────────────────────────────────────────────
+
+    def _rebuild_assignments(self) -> None:
+        self._assign_checks = {}
+        self._assign_section_layouts = {}
+
+        while self._asgn_layout.count():
+            item = self._asgn_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for label, key in _EFFECT_LABELS:
+            # Section header
+            hdr = QLabel(label.upper())
+            hdr.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {_MUTED}; letter-spacing: 1px; margin-top: 10px;")
+            self._asgn_layout.addWidget(hdr)
+
+            # Container for checkboxes
+            section_w = QWidget()
+            section_v = QVBoxLayout(section_w)
+            section_v.setContentsMargins(8, 2, 0, 4)
+            section_v.setSpacing(2)
+            self._asgn_layout.addWidget(section_w)
+            self._assign_section_layouts[key] = section_v
+
+            self._assign_checks[key] = {}
+            assigned = self._assignments.get(key, [])
+            if not self._lights:
+                placeholder = QLabel("No lights configured yet.")
+                placeholder.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+                section_v.addWidget(placeholder)
+            else:
+                for light in self._lights:
+                    name = light["name"]
+                    cb = QCheckBox(name)
+                    cb.setChecked(name in assigned)
+                    cb.toggled.connect(self._on_assignment_changed)
+                    section_v.addWidget(cb)
+                    self._assign_checks[key][name] = cb
+
+    def _refresh_assignment_section(self, key: str) -> None:
+        """Add/remove checkboxes for one effect section without full rebuild."""
+        section_v = self._assign_section_layouts.get(key)
+        if section_v is None:
+            return
+        # Clear
+        while section_v.count():
+            item = section_v.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._assign_checks[key] = {}
+        assigned = self._assignments.get(key, [])
+        if not self._lights:
+            placeholder = QLabel("No lights configured yet.")
+            placeholder.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+            section_v.addWidget(placeholder)
+        else:
+            for light in self._lights:
+                name = light["name"]
+                cb = QCheckBox(name)
+                cb.setChecked(name in assigned)
+                cb.toggled.connect(self._on_assignment_changed)
+                section_v.addWidget(cb)
+                self._assign_checks[key][name] = cb
+
+    # ── slots ─────────────────────────────────────────────────────────────────
+
+    def _on_assignment_changed(self) -> None:
+        self._on_change()
+
+    def _on_add(self, _=None) -> None:
+        dlg = _LightEditDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        light = dlg.result_light()
+        # Avoid duplicate names
+        if any(l["name"] == light["name"] for l in self._lights):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Duplicate Name", f"A light named '{light['name']}' already exists.")
+            return
+        self._lights.append(light)
+        self._add_registry_row(light)
+        for key in self._assign_checks:
+            self._refresh_assignment_section(key)
+        self._on_change()
+
+    def _on_edit(self, _=None) -> None:
+        name = self._selected_name
+        if not name:
+            return
+        light = next((l for l in self._lights if l["name"] == name), None)
+        if not light:
+            return
+        dlg = _LightEditDialog(self, light)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dlg.result_light()
+        old_name = light["name"]
+        # Update in place
+        light.update(updated)
+        # If name changed, update assignments and dots
+        if updated["name"] != old_name:
+            for key, assigned in self._assignments.items():
+                if old_name in assigned:
+                    assigned.remove(old_name)
+                    assigned.append(updated["name"])
+        self._rebuild_registry()
+        self._rebuild_assignments()
+        self._on_change()
+
+    def _on_remove(self, _=None) -> None:
+        name = self._selected_name
+        if not name:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Remove Light",
+            f"Remove '{name}' from the registry?\nIt will also be removed from any effect assignments.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._lights = [l for l in self._lights if l["name"] != name]
+        for key, assigned in self._assignments.items():
+            if name in assigned:
+                assigned.remove(name)
+        self._selected_name = None
+        self._rebuild_registry()
+        self._rebuild_assignments()
+        self._on_change()
+
+    def _on_scan(self, _=None) -> None:
+        dlg = _LightScanDialog(self, existing_names=[l["name"] for l in self._lights])
+        dlg.exec()
+        added = dlg.get_added()
+        if not added:
+            return
+        for light in added:
+            if not any(l["name"] == light["name"] for l in self._lights):
+                self._lights.append(light)
+                self._add_registry_row(light)
+        if added:
+            for key in self._assign_checks:
+                self._refresh_assignment_section(key)
+            self._on_change()
+
+    # ── public ────────────────────────────────────────────────────────────────
+
+    def get_lights(self) -> list[dict]:
+        return list(self._lights)
+
+    def get_assignments(self) -> dict:
+        result = {}
+        for effect, checks in self._assign_checks.items():
+            result[effect] = [name for name, cb in checks.items() if cb.isChecked()]
+        # For effects that have no checkboxes yet (no lights), preserve existing
+        for key in ("rev_counter", "brake_lights", "flag_effect", "pit_limiter"):
+            if key not in result:
+                result[key] = list(self._assignments.get(key, []))
+        return result
+
+    def get_settings(self) -> dict:
+        return {
+            "lights":       self.get_lights(),
+            "effect_lights": self.get_assignments(),
+        }
+
+    def update_light_status(self, status: dict) -> None:
+        for name, dot in self._status_dots.items():
+            s = status.get(name, "idle")
+            dot.setStyleSheet(f"color: {_dot_color(s)}; font-size: 16px;")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2213,10 +2756,17 @@ class SimDeckApp(QMainWindow):
             "simhub_port":     settings.get("simhub_port",     config.SIMHUB_PORT),
         }
 
+        lights     = settings.get("lights", [])
+        effect_lights = settings.get("effect_lights", {
+            "rev_counter": [], "brake_lights": [], "flag_effect": [], "pit_limiter": [],
+        })
+        lights_config = {l["name"]: {"ip": l["ip"]} for l in lights}
+
         self._logger   = TelemetryLogger()
         self._engine   = Engine(
             simhub_host=self._app_settings["simhub_host"],
             simhub_port=self._app_settings["simhub_port"],
+            lights_config=lights_config,
         )
         self._splitter = UDPSplitter(
             listen_port=settings["splitter_port"],
@@ -2241,6 +2791,8 @@ class SimDeckApp(QMainWindow):
         self._lifx_tab = LIFXTab(
             engine=self._engine,
             settings=settings,
+            lights=lights,
+            light_assignments=effect_lights,
             on_change=self._on_lifx_change,
             on_force_restart=self._force_restart,
             ui=self._ui,
@@ -2252,6 +2804,12 @@ class SimDeckApp(QMainWindow):
 
         self._test_tab = TestTab(self._engine, self._lifx_tab.get_effect_kwargs, self._ui)
         light_tabs.addTab(self._test_tab, "Test")
+
+        self._lights_tab = LightsTab(
+            settings=settings,
+            on_change=self._on_lights_change,
+        )
+        light_tabs.addTab(self._lights_tab, "Lights")
 
         main_tabs.addTab(light_tabs, "Light Control")
 
@@ -2336,6 +2894,7 @@ class SimDeckApp(QMainWindow):
         settings = {}
         settings.update(self._lifx_tab.get_settings())
         settings.update(self._splitter_tab.get_settings())
+        settings.update(self._lights_tab.get_settings())
         settings.update(self._app_settings)
         settings_manager.save(settings)
 
@@ -2368,6 +2927,15 @@ class SimDeckApp(QMainWindow):
         self._lifx_tab.mark_pending(True)
         self._restart_timer.start()
 
+    def _on_lights_change(self) -> None:
+        lights    = self._lights_tab.get_lights()
+        asgn      = self._lights_tab.get_assignments()
+        lc        = {l["name"]: {"ip": l["ip"]} for l in lights}
+        self._engine.update_lights_config(lc)
+        self._lifx_tab.update_lights(lights, asgn)
+        self._save_settings()
+        self._force_restart()
+
     def _auto_restart(self) -> None:
         self._lifx_tab.mark_pending(False)
         self._do_restart()
@@ -2394,6 +2962,7 @@ class SimDeckApp(QMainWindow):
         status    = self._engine.get_status()
         telemetry = self._engine.get_telemetry()
         self._lifx_tab.poll(status, telemetry)
+        self._lights_tab.update_light_status(status.get("lights", {}))
         self._splitter_tab.poll()
         self._logger.feed(telemetry)
         self._logger_tab.poll(

@@ -44,6 +44,13 @@ DEFAULTS: dict = {
     },
     # App-level settings
     "font_size_pt":    10,
+    "lights": [],
+    "effect_lights": {
+        "rev_counter":  [],
+        "brake_lights": [],
+        "flag_effect":  [],
+        "pit_limiter":  [],
+    },
     "accent_color":    "#f0a500",
     "start_minimized": False,
     "simhub_host":     "127.0.0.1",

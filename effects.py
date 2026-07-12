@@ -107,12 +107,13 @@ class RevCounterEffect:
     """
 
     @classmethod
-    def needed_lights(cls, **_) -> list[str]:
-        return ["strip"]
+    def needed_lights(cls, rev_counter_lights=None, **_) -> list[str]:
+        return list(rev_counter_lights or ["strip"])
 
     def __init__(
         self,
         rig: LightRig,
+        rev_counter_lights: list[str] | None = None,
         start_rpm: int = 0,
         start_threshold: float = 0.50,
         redline_threshold: float = 0.92,
@@ -125,7 +126,7 @@ class RevCounterEffect:
         color_scheme: str = "classic",
         **_,
     ):
-        self.controller = rig.get("strip")
+        self.controller = rig.get((rev_counter_lights or ["strip"])[0])
         self.start_rpm = start_rpm
         self.start_threshold = start_threshold
         self.redline_threshold = redline_threshold
