@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2109,6 +2109,7 @@ class LoggerTab(QWidget):
         bar_h.addWidget(self._game_lbl)
         bar_h.addStretch()
         self._auto_cb = QCheckBox("Auto Record")
+        self._auto_cb.setChecked(True)
         self._auto_cb.stateChanged.connect(self._on_auto_changed)
         bar_h.addWidget(self._auto_cb)
         self._toggle_btn = QPushButton("Start Recording")
@@ -2195,6 +2196,7 @@ class LoggerTab(QWidget):
         self._refresh_lap_table()
 
     def _stop_recording(self) -> None:
+        self._logger.flush_pending_lap()
         self._logger.stop_session()
         self._rec_dot.setStyleSheet(f"color: {_GREY}; font-size: 20px;")
         self._rec_lbl.setText("Not recording")
@@ -2265,6 +2267,7 @@ class LoggerTab(QWidget):
 
         if game:
             self._game_lbl.setText(f"  {game}")
+            self._logger.update_session_game(game)
         else:
             self._game_lbl.setText("")
 
@@ -2955,6 +2958,7 @@ class SimDeckApp(QMainWindow):
         self._game_timer.setInterval(20000)
         self._game_timer.timeout.connect(self._check_game)
         self._game_timer.start()
+        self._check_game()  # detect game immediately so recording starts with the right name
 
         self._last_tray_status: str | None = None
         self._update_version: str | None = None

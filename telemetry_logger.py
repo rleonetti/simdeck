@@ -60,6 +60,8 @@ class TelemetryLogger:
         self._prev_last_ms: int | None = None
         self._lap_ever_invalid  = False
         self._prev_checkered    = False
+        self._prev_cur_time_ms: int | None = None
+        self._session_game:    str | None = None
         self._session_vehicle: str | None = None
         self._session_track:   str | None = None
         self.on_lap_recorded: Callable[[], None] | None = None
@@ -85,18 +87,48 @@ class TelemetryLogger:
                 (datetime.now().isoformat(timespec="seconds"), game),
             )
             self._conn.commit()
-            self._session_id  = cur.lastrowid
-            self._prev_lap    = None
+            self._session_id   = cur.lastrowid
+            self._session_game = game
+            self._prev_lap     = None
             self._prev_last_ms = None
 
     def stop_session(self) -> None:
         with self._lock:
-            self._session_id   = None
-            self._prev_lap     = None
-            self._prev_last_ms = None
+            self._session_id       = None
+            self._session_game     = None
+            self._prev_lap         = None
+            self._prev_last_ms     = None
             self._prev_checkered   = False
+            self._prev_cur_time_ms = None
             self._session_vehicle  = None
             self._session_track    = None
+
+    def flush_pending_lap(self) -> None:
+        """For Forza: telemetry stops without a lap-end signal — save the last known time."""
+        if (self._session_id is None
+                or self._session_game is None
+                or "forza" not in self._session_game.lower()):
+            return
+        if (self._prev_cur_time_ms is not None
+                and self._prev_cur_time_ms >= _MIN_VALID_LAP_MS
+                and self._prev_lap is not None
+                and self._prev_cur_time_ms != self._prev_last_ms):
+            valid = not self._lap_ever_invalid
+            self._lap_ever_invalid = False
+            logger.info("FLUSH: lap %s  time=%d ms  game=%r",
+                        self._prev_lap, self._prev_cur_time_ms, self._session_game)
+            self._record_lap(int(self._prev_lap), self._prev_cur_time_ms, valid=valid)
+
+    def update_session_game(self, game: str) -> None:
+        """Fill in the game name if recording started before it was detected."""
+        if self._session_id is not None and self._session_game is None and game:
+            self._session_game = game
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE sessions SET game=? WHERE id=? AND game IS NULL",
+                    (game, self._session_id),
+                )
+                self._conn.commit()
 
     def delete_session(self, session_id: int) -> None:
         with self._lock:
@@ -136,9 +168,12 @@ class TelemetryLogger:
         if cur_lap is None:
             return
 
-        last_ms   = _ms(last_secs) if last_secs else 0
-        is_valid  = bool(telemetry.get("is_lap_valid", 1))
+        last_ms          = _ms(last_secs) if last_secs else 0
+        cur_time_ms      = _ms(telemetry.get("current_lap_time", 0.0))
+        prev_cur_time_ms = self._prev_cur_time_ms   # snapshot before update
+        self._prev_cur_time_ms = cur_time_ms
 
+        is_valid       = bool(telemetry.get("is_lap_valid", 1))
         checkered      = bool(telemetry.get("flag_checkered", 0))
         checkered_edge = checkered and not self._prev_checkered
         self._prev_checkered = checkered
@@ -173,22 +208,35 @@ class TelemetryLogger:
             self._lap_ever_invalid = False   # reset for the new lap
             self._record_lap(int(prev_lap), last_ms, valid=valid)
 
-        # Checkered flag detection: catches single-lap races and the final lap of
-        # any race where the lap counter never increments past the finish line.
+        # Checkered flag detection: catches the final lap of any race where the
+        # lap counter never increments past the finish line.
         elif checkered_edge and last_ms != self._prev_last_ms:
             if last_ms >= _MIN_VALID_LAP_MS:
-                # last_lap_time was populated at finish
                 self._prev_last_ms = last_ms
                 valid = not self._lap_ever_invalid
                 self._lap_ever_invalid = False
                 self._record_lap(int(cur_lap), last_ms, valid=valid)
-            else:
-                # Fallback: use current_lap_time (some games don't set last_lap_time)
-                cur_time_ms = _ms(telemetry.get("current_lap_time", 0.0))
-                if cur_time_ms >= _MIN_VALID_LAP_MS:
-                    valid = not self._lap_ever_invalid
-                    self._lap_ever_invalid = False
-                    self._record_lap(int(cur_lap), cur_time_ms, valid=valid)
+            elif cur_time_ms >= _MIN_VALID_LAP_MS:
+                valid = not self._lap_ever_invalid
+                self._lap_ever_invalid = False
+                self._record_lap(int(cur_lap), cur_time_ms, valid=valid)
+
+        # current_lap_time reset detection: Forza resets current_lap_time to 0
+        # at race end without incrementing the lap counter, firing the checkered
+        # flag, or populating last_lap_time. Only enabled for Forza — other games
+        # legitimately reset current_lap_time between normal laps.
+        elif (
+            cur_time_ms == 0
+            and prev_cur_time_ms is not None
+            and prev_cur_time_ms >= _MIN_VALID_LAP_MS
+            and cur_lap == prev_lap
+            and prev_cur_time_ms != self._prev_last_ms  # not already recorded by normal detection
+            and self._session_game is not None
+            and "forza" in self._session_game.lower()
+        ):
+            valid = not self._lap_ever_invalid
+            self._lap_ever_invalid = False
+            self._record_lap(int(cur_lap), prev_cur_time_ms, valid=valid)
 
     def _record_lap(self, lap_number: int, lap_ms: int, valid: bool = True) -> None:
         with self._lock:

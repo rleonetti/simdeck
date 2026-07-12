@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.4 — 2026-07-12
+### Added
+- Auto Record defaults to enabled — recording starts automatically when SimHub connects, no manual step needed
+- Game detection runs at startup (previously only every 20 seconds), so the session is tagged with the correct game name from the first lap
+- `flush_pending_lap()`: when telemetry goes silent at race end (Forza stops sending data rather than sending a lap-end signal), the last known lap time is saved automatically
+
+### Fixed
+- Single-lap races in Forza Horizon 6 are now recorded — the detection correctly captures `current_lap_time` at the moment telemetry stops, gated to Forza sessions only to avoid false positives in other games
+
 ## v1.2.3 — 2026-07-12
 ### Fixed
 - Engine connection: replaced `get_devices()` (which called `discover_devices()` → `is_switch()` → `get_version_tuple()`, making 4+ network calls per light and causing `WorkflowException` on slow responders) with a single `GetService` query per light
