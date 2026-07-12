@@ -43,7 +43,24 @@ Useful for running SimHub, motion platforms (Moza, SimXperience, etc.), and cust
 
 ### Test tab
 
-Connects directly to LIFX (bypassing the live engine) for animation testing without needing a game running. Useful for dialing in brightness, colors, and timing.
+Connects directly to LIFX (bypassing the live engine) for animation testing without needing a game running. Four dedicated panels let you test each effect independently:
+
+- **Rev Counter** — choose animation mode and scrub the RPM slider
+- **Brake Lights** — scrub brake pressure
+- **Flags** — trigger any flag type with a single click
+- **Pit Limiter** — toggle on/off
+
+Useful for dialing in brightness, colours, and timing before a session.
+
+---
+
+### Settings tab
+
+- **Font size** — adjusts text size across the whole app
+- **Accent color** — color picker that changes the highlight color used for sliders, checkboxes, and the active tab underline. Takes effect immediately and persists between sessions
+- **Updates** — check for updates manually; when one is available, clicking **Update to vX.X.X** downloads the installer, quits SimDeck, and launches the installer automatically
+- **Startup** — launch at Windows startup and/or start minimized to tray
+- **Connection** — SimHub Property Server host and port
 
 ---
 
@@ -53,7 +70,7 @@ Connects directly to LIFX (bypassing the live engine) for animation testing with
 
 Download `SimDeck-x.x.x-setup.exe` from the [Releases page](https://github.com/rleonetti/simdeck/releases). Installs per-user — no admin rights or UAC prompt required. An optional startup entry lets SimDeck launch with Windows.
 
-SimDeck checks for updates on startup. When a newer version is available a notification appears in the tray menu. You can also trigger a manual check via right-click → **Check for Update**.
+SimDeck checks for updates on startup. When a newer version is available the tray icon and Settings tab both show a notification. Clicking **Update to vX.X.X** downloads the installer in the background, quits the app, and launches the installer — no manual steps required.
 
 ### Run from source
 
