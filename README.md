@@ -8,9 +8,21 @@ Runs as a Windows system-tray app. Settings persist between sessions. Installer 
 
 ## Features
 
+### Lights tab
+
+Manage which LIFX lights SimDeck controls and which effects each one participates in.
+
+- **Registry** — add lights by name and IP (manual or via Scan Network); Edit and Remove are also available
+- **Scan Network** — discovers all LIFX lights on your subnet via unicast sweep; already-registered lights are hidden so only new ones appear
+- **Effect Assignments** — checkboxes assign each registered light to Rev Counter, Brake Lights, Flag Effect, and/or Pit Limiter independently
+
+Settings are saved automatically. No config file editing required.
+
+---
+
 ### LIFX Effects tab
 
-Controls LIFX lights in real time using telemetry from SimHub.
+Controls LIFX lights in real time using telemetry from SimHub. The lights used by each effect are configured in the Lights tab.
 
 **Rev Counter** — fills an LED strip with colour as RPM climbs, with a configurable redline flash
 - **Modes:** Center Fill (Porsche-style, fills from both ends inward), Left → Right, or Full Strip
@@ -23,7 +35,7 @@ Controls LIFX lights in real time using telemetry from SimHub.
 
 **Pit Limiter** — flashes the strip, ceiling lights, or both when the pit limiter is active
 
-Multiple effects run simultaneously every frame. Each effect can address any combination of named lights. The status bar shows live RPM, max RPM, and brake % when SimHub is connected, and a per-light connection indicator shows which LIFX lights are reachable.
+Multiple effects run simultaneously every frame. The status bar shows live RPM, max RPM, and brake % when SimHub is connected, and a per-light connection indicator shows which LIFX lights are reachable.
 
 ---
 
@@ -92,20 +104,13 @@ SimDeck reads telemetry over TCP from the [SimHub Property Server](https://githu
 3. Restart SimHub → **Settings → Plugins** → enable **SimHub Property Server**
 4. Restart SimHub — it will now listen on TCP port 18082
 
-### LIFX IP addresses
+### LIFX lights
 
-Edit `config.py` and set the IP for each light under `LIFX_LIGHTS`. Direct IPs are recommended over broadcast — they work across VLANs and connect faster.
+Add your lights in the **Lights tab** — either type the IP directly with **+ Add**, or use **Scan Network** to discover all LIFX devices on your subnet automatically. Give each light a name, then use the effect assignment checkboxes to control which effects it participates in.
 
-For local overrides without touching the tracked file, create `config_local.py` (gitignored) with the same keys — values there take precedence:
+Light settings are stored in `%USERPROFILE%\Documents\SimDeck\settings.json` and persist between sessions.
 
-```python
-# config_local.py — not tracked by git
-LIFX_LIGHTS = {
-    "strip":       {"ip": "192.168.x.x"},
-    "front_right": {"ip": "192.168.x.x"},
-    ...
-}
-```
+> **Upgrading from an older version?** If you previously configured lights in `config_local.py`, SimDeck will automatically import them into the registry on first launch.
 
 ---
 
