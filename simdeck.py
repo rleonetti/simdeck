@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from typing import Callable
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -170,8 +170,8 @@ def _apply_font_size(size_pt: int) -> None:
         app.setFont(font)
 
 
-def _check_for_update() -> str | None:
-    """Return the latest release tag (e.g. '1.2.0') if newer than __version__, else None."""
+def _check_for_update() -> tuple[str, str] | None:
+    """Return (version, download_url) if a newer release is available, else None."""
     try:
         req = urllib.request.Request(_RELEASES_URL, headers={"User-Agent": "SimDeck"})
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -184,7 +184,14 @@ def _check_for_update() -> str | None:
                 return tuple(int(x) for x in s.split("."))
             except ValueError:
                 return (0,)
-        return tag if _ver(tag) > _ver(__version__) else None
+        if _ver(tag) <= _ver(__version__):
+            return None
+        url = next(
+            (a["browser_download_url"] for a in data.get("assets", [])
+             if a["name"].lower().endswith(".exe")),
+            _RELEASES_PAGE,
+        )
+        return tag, url
     except Exception:
         return None
 
@@ -1906,13 +1913,16 @@ class SettingsTab(QWidget):
                  on_check_update: Callable[[], None],
                  on_startup_change: Callable[[bool, bool], None],
                  on_simhub_change: Callable[[str, int], None],
-                 on_accent_change: Callable[[str], None] | None = None) -> None:
+                 on_accent_change: Callable[[str], None] | None = None,
+                 on_install_update: Callable[[str], None] | None = None) -> None:
         super().__init__()
-        self._on_font_change    = on_font_change
-        self._on_check_update   = on_check_update
-        self._on_startup_change = on_startup_change
-        self._on_simhub_change  = on_simhub_change
-        self._on_accent_change  = on_accent_change or (lambda _: None)
+        self._on_font_change     = on_font_change
+        self._on_check_update    = on_check_update
+        self._on_startup_change  = on_startup_change
+        self._on_simhub_change   = on_simhub_change
+        self._on_accent_change   = on_accent_change or (lambda _: None)
+        self._on_install_update  = on_install_update
+        self._download_url: str  = ""
         self._build(settings)
 
     def _build(self, settings: dict) -> None:
@@ -2004,10 +2014,10 @@ class SettingsTab(QWidget):
         cv.addLayout(update_row)
         cv.addSpacing(6)
 
-        self._download_btn = QPushButton("Download")
+        self._download_btn = QPushButton("Update Now")
         self._download_btn.setFixedWidth(120)
         self._download_btn.setVisible(False)
-        self._download_btn.clicked.connect(lambda: webbrowser.open(_RELEASES_PAGE))
+        self._download_btn.clicked.connect(self._on_update_now_clicked)
         cv.addWidget(self._download_btn)
 
         # ── STARTUP ───────────────────────────────────────────────────────────
@@ -2086,6 +2096,12 @@ class SettingsTab(QWidget):
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
+    def _on_update_now_clicked(self, _=None) -> None:
+        if self._on_install_update and self._download_url:
+            self._on_install_update(self._download_url)
+        else:
+            webbrowser.open(_RELEASES_PAGE)
+
     def _update_accent_swatch(self) -> None:
         self._accent_swatch.setStyleSheet(
             f"background-color: {self._accent_color}; border-radius: 4px;"
@@ -2112,24 +2128,38 @@ class SettingsTab(QWidget):
         self._download_btn.setVisible(False)
         self._on_check_update()
 
-    def set_update_result(self, version: str | None) -> None:
+    def set_update_result(self, version: str | None, url: str = "") -> None:
         """Called on the main thread after a manual update check."""
         self._check_btn.setEnabled(True)
         if version:
+            self._download_url = url
             self._update_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 14px;")
             self._update_status_lbl.setText(f"v{version} available")
-            self._download_btn.setText(f"Download v{version}")
+            self._download_btn.setText(f"Update to v{version}")
+            self._download_btn.setEnabled(True)
             self._download_btn.setVisible(True)
         else:
             self._update_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
             self._update_status_lbl.setText("Up to date ✓")
 
-    def set_update_available(self, version: str) -> None:
+    def set_update_available(self, version: str, url: str = "") -> None:
         """Called when the background startup check finds a newer version."""
+        self._download_url = url
         self._update_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 14px;")
         self._update_status_lbl.setText(f"v{version} available")
-        self._download_btn.setText(f"Download v{version}")
+        self._download_btn.setText(f"Update to v{version}")
+        self._download_btn.setEnabled(True)
         self._download_btn.setVisible(True)
+
+    def set_downloading(self) -> None:
+        self._download_btn.setEnabled(False)
+        self._update_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 14px;")
+        self._update_status_lbl.setText("Downloading…")
+
+    def set_download_error(self) -> None:
+        self._download_btn.setEnabled(True)
+        self._update_status_lbl.setStyleSheet(f"color: #cc4444; font-size: 14px;")
+        self._update_status_lbl.setText("Download failed — try again")
 
     def _on_startup_toggled(self) -> None:
         self._on_startup_change(
@@ -2247,6 +2277,7 @@ class SimDeckApp(QMainWindow):
             on_startup_change=self._on_startup_change,
             on_simhub_change=self._on_simhub_change,
             on_accent_change=self._on_accent_change,
+            on_install_update=self._do_install_update,
         )
         main_tabs.addTab(self._settings_tab, "Settings")
 
@@ -2277,6 +2308,7 @@ class SimDeckApp(QMainWindow):
 
         self._last_tray_status: str | None = None
         self._update_version: str | None = None
+        self._update_download_url: str = ""
         self._setup_tray()
 
         initial_kwargs = self._lifx_tab.get_effect_kwargs()
@@ -2393,32 +2425,61 @@ class SimDeckApp(QMainWindow):
         self.activateWindow()
 
     def _bg_update_check(self) -> None:
-        latest = _check_for_update()
-        if latest:
-            self._update_version = latest
+        result = _check_for_update()
+        if result:
+            ver, url = result
+            self._update_version = ver
+            self._update_download_url = url
             self._ui.call.emit(lambda: self._tray.update_menu())
-            self._ui.call.emit(lambda: self._settings_tab.set_update_available(latest))
+            self._ui.call.emit(lambda: self._settings_tab.set_update_available(ver, url))
 
     def _manual_update_check(self) -> None:
         def _worker() -> None:
-            latest = _check_for_update()
-            if latest:
-                self._update_version = latest
+            result = _check_for_update()
+            if result:
+                ver, url = result
+                self._update_version = ver
+                self._update_download_url = url
                 self._ui.call.emit(lambda: self._tray.update_menu())
                 try:
-                    self._tray.notify(f"Update available: v{latest} — click tray menu to download.", "SimDeck")
+                    self._tray.notify(f"Update available: v{ver} — click tray to install.", "SimDeck")
                 except Exception:
                     pass
-            self._ui.call.emit(lambda: self._settings_tab.set_update_result(latest))
+                self._ui.call.emit(lambda: self._settings_tab.set_update_result(ver, url))
+            else:
+                self._ui.call.emit(lambda: self._settings_tab.set_update_result(None))
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _do_install_update(self, url: str) -> None:
+        """Download the installer to %TEMP%, launch it, then quit the app."""
+        import tempfile
+        from pathlib import Path
+        self._ui.call.emit(lambda: self._settings_tab.set_downloading())
+
+        def _worker() -> None:
+            try:
+                tmp = Path(tempfile.gettempdir()) / "simdeck-update.exe"
+                urllib.request.urlretrieve(url, tmp)
+                self._ui.call.emit(lambda: self._launch_installer_and_quit(str(tmp)))
+            except Exception:
+                self._ui.call.emit(lambda: self._settings_tab.set_download_error())
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _launch_installer_and_quit(self, path: str) -> None:
+        import os
+        os.startfile(path)
+        self._quit()
 
     def _setup_tray(self) -> None:
         menu = pystray.Menu(
             pystray.MenuItem("Open", lambda *_: self._ui.call.emit(self._restore), default=True),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                lambda item: f"Update available: v{self._update_version} — click to download",
-                lambda *_: webbrowser.open(_RELEASES_PAGE),
+                lambda item: f"Update available: v{self._update_version} — click to install",
+                lambda *_: self._ui.call.emit(
+                    lambda: self._do_install_update(self._update_download_url or _RELEASES_PAGE)
+                ),
                 visible=lambda item: self._update_version is not None,
             ),
             pystray.MenuItem("Check for Update", lambda *_: self._manual_update_check()),
@@ -2445,6 +2506,7 @@ class SimDeckApp(QMainWindow):
         return bool(self._app_settings.get("start_minimized", False))
 
     def closeEvent(self, event) -> None:
+        self._save_settings()
         event.ignore()
         self._to_tray()
 
