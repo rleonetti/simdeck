@@ -583,6 +583,11 @@ class LIFXTab(QWidget):
             " padding-top: 12px; padding-bottom: 2px; padding-left: 10px;"
         )
         layout.addWidget(lbl)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
+        sep.setStyleSheet(f"color: {_GREY};")
+        layout.addWidget(sep)
         return lbl
 
     def _slider(self, layout: QVBoxLayout, label: str, value: int, from_: int, to: int) -> _NoScrollSlider:
@@ -1812,10 +1817,20 @@ class SettingsTab(QWidget):
         outer.addStretch()
 
     @staticmethod
-    def _section_hdr(text: str) -> QLabel:
+    def _section_hdr(text: str) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(4)
         lbl = QLabel(text)
         lbl.setStyleSheet(f"font-size: 19px; font-weight: bold; color: {_MUTED};")
-        return lbl
+        v.addWidget(lbl)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
+        sep.setStyleSheet(f"color: {_GREY};")
+        v.addWidget(sep)
+        return w
 
     # ── slots ─────────────────────────────────────────────────────────────────
 
