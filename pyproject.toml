@@ -24,9 +24,11 @@ dev = [
     "pytest",
 ]
 
+[project.scripts]
+simdeck = "simdeck.__main__:main"
+
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["simdeck*"]
+where = ["src"]
 
 [tool.ruff]
 line-length = 100

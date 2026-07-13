@@ -1,6 +1,6 @@
 import logging
 
-from lifx_controller import LIFXController
+from .lifx_controller import LIFXController
 
 logger = logging.getLogger(__name__)
 

@@ -19,8 +19,8 @@ hiddenimports += _hidden
 
 
 a = Analysis(
-    [os.path.join(_root, 'simdeck.py')],
-    pathex=[],
+    [os.path.join(_root, 'run.py')],
+    pathex=[os.path.join(_root, 'src')],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports + ['PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui', 'pystray._win32', 'psutil', 'lifxlan', 'bitstring.bitstore_bitarray', 'bitstring.bitstore_bitarray_helpers', 'bitstring.bitstore_common_helpers', 'bitstring.bitstore_tibs', 'bitstring.bitstore_tibs_helpers', 'bitstring.array_', 'bitstring.bitarray_', 'bitstring.luts', 'bitstring.mxfp'],

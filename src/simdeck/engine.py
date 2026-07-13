@@ -4,11 +4,11 @@ import logging
 import threading
 import time
 
-import config
-from effects import EFFECTS
-from lifx_controller import LIFXController
-from light_rig import LightRig
-from simhub_client import SimHubClient
+from . import config
+from .effects import EFFECTS
+from .lifx_controller import LIFXController
+from .light_rig import LightRig
+from .simhub_client import SimHubClient
 
 logger = logging.getLogger(__name__)
 

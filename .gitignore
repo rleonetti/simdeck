@@ -7,3 +7,4 @@ installer_output/
 .env
 config_local.py
 FEATURE_IDEAS.md
+*.egg-info/

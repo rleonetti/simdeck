@@ -8,7 +8,7 @@ The app writes immediately on every change — no Save button needed.
 import json
 from pathlib import Path
 
-import config
+from . import config
 
 _DIR  = Path.home() / "Documents" / "SimDeck"
 _FILE = _DIR / "settings.json"

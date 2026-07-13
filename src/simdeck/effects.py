@@ -15,7 +15,7 @@ To add a new effect:
 import logging
 import time
 
-from light_rig import LightRig
+from .light_rig import LightRig
 
 logger = logging.getLogger(__name__)
 

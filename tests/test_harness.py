@@ -13,14 +13,14 @@ from PySide6.QtWidgets import (
     QLabel, QSlider, QCheckBox, QPushButton, QLineEdit, QFrame,
 )
 
-import config
-import log_setup
-import settings_manager
+from simdeck import config
+from simdeck import log_setup
+from simdeck import settings_manager
 
 log_setup.setup()
-from effects import EFFECTS
-from lifx_controller import LIFXController
-from light_rig import LightRig
+from simdeck.effects import EFFECTS
+from simdeck.lifx_controller import LIFXController
+from simdeck.light_rig import LightRig
 
 _GREEN  = "#2ecc71"
 _YELLOW = "#f0a500"

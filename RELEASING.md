@@ -1,7 +1,8 @@
 # Release Checklist
 
-1. **Bump version** in two places:
-   - `simdeck.py` → `__version__ = "X.X.X"`
+1. **Bump version** in three places:
+   - `src/simdeck/__init__.py` → `__version__ = "X.X.X"`
+   - `src/simdeck/simdeck.py` → `__version__ = "X.X.X"`
    - `packaging/windows/installer.iss` → `#define AppVersion "X.X.X"`
 
 2. **Update docs:**
@@ -10,7 +11,7 @@
 
 3. **Commit and push:**
    ```
-   git add simdeck.py packaging/windows/installer.iss CHANGELOG.md README.md
+   git add src/simdeck/__init__.py src/simdeck/simdeck.py packaging/windows/installer.iss CHANGELOG.md README.md
    git commit -m "vX.X.X — describe what changed"
    git push origin master
    ```

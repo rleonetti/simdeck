@@ -33,14 +33,14 @@ from PySide6.QtWidgets import (
 from PIL import Image, ImageDraw
 import pystray
 
-import config
-import log_setup
-import settings_manager
-from effects import EFFECTS
-from engine import Engine
-from moza_pedals import MozaPedals
-from telemetry_logger import TelemetryLogger
-from udp_splitter import UDPSplitter
+from . import config
+from . import log_setup
+from . import settings_manager
+from .effects import EFFECTS
+from .engine import Engine
+from .moza_pedals import MozaPedals
+from .telemetry_logger import TelemetryLogger
+from .udp_splitter import UDPSplitter
 
 log_setup.setup()
 
@@ -3675,7 +3675,7 @@ class SimDeckApp(QMainWindow):
         self._to_tray()
 
 
-if __name__ == "__main__":
+def main() -> None:
     app = QApplication(sys.argv)
     _init_settings = settings_manager.load()
     _init_accent   = _init_settings.get("accent_color", "#f0a500")

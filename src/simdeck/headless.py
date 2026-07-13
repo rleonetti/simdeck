@@ -3,12 +3,12 @@ import signal
 import sys
 import time
 
-import config
-import log_setup
-from effects import EFFECTS
-from lifx_controller import LIFXController
-from light_rig import LightRig
-from simhub_client import SimHubClient
+from . import config
+from . import log_setup
+from .effects import EFFECTS
+from .lifx_controller import LIFXController
+from .light_rig import LightRig
+from .simhub_client import SimHubClient
 
 log_setup.setup()
 logger = logging.getLogger(__name__)
