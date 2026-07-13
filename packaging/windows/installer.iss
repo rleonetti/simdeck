@@ -1,5 +1,5 @@
 #define AppName "SimDeck"
-#define AppVersion "1.3.2"
+#define AppVersion "1.4.0"
 #define AppPublisher "rleonetti"
 #define AppURL "https://github.com/rleonetti/simdeck"
 #define AppExeName "SimDeck.exe"

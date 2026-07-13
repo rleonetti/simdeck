@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.4.0 — 2026-07-13
+### Changed
+- **Full internal rewrite** — `simdeck.py` (3688-line monolith) split into a proper `src/simdeck/ui/` package: `constants`, `theme`, `helpers`, `widgets`, `overlay`, `app`, and a `tabs/` sub-package (`lifx`, `lights`, `test`, `splitter`, `logger`, `history`, `settings`); no user-visible behaviour changes
+- Moved all source into `src/simdeck/` layout with setuptools editable install; `python -m simdeck` and `simdeck` script entry point both work
+
 ## v1.3.2 — 2026-07-13
 ### Added
 - **Gradient background** — the main window background fades diagonally from near-black (top-left) to a muted accent color (bottom-right); toggle with the new "Gradient background" checkbox in Settings → APPEARANCE; defaults to on; the gradient tracks the accent color picker live

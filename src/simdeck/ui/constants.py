@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 # ── Version ───────────────────────────────────────────────────────────────────
-__version__    = "1.3.2"
+__version__    = "1.4.0"
 _RELEASES_URL  = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
