@@ -3008,66 +3008,77 @@ class TelemetryOverlay(QWidget):
 
         painter.end()
 
+    @staticmethod
+    def _smooth(pts: list[tuple[float, float]]) -> QPainterPath:
+        """Quadratic bezier through midpoints — smooths staircase artefacts from low-rate data."""
+        path = QPainterPath()
+        n = len(pts)
+        if n == 0:
+            return path
+        path.moveTo(pts[0][0], pts[0][1])
+        if n == 1:
+            return path
+        # Walk through midpoints as bezier targets; actual data points are control points
+        mx, my = (pts[0][0] + pts[1][0]) / 2.0, (pts[0][1] + pts[1][1]) / 2.0
+        path.lineTo(mx, my)
+        for i in range(1, n - 1):
+            cx, cy = pts[i]
+            mx = (pts[i][0] + pts[i + 1][0]) / 2.0
+            my = (pts[i][1] + pts[i + 1][1]) / 2.0
+            path.quadTo(cx, cy, mx, my)
+        path.lineTo(pts[-1][0], pts[-1][1])
+        return path
+
     def _paint_mirrored(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
         """Throttle fills upward from center; brake fills downward from center."""
         cy     = pad_y + gh / 2.0
         half_h = gh / 2.0 - 1
         n      = _OVL_HISTORY
 
-        # Center divider
         painter.setPen(QPen(QColor(70, 70, 70, int(180 * self._bg_alpha)), 1.0))
         painter.drawLine(pad_x, int(cy), pad_x + gw, int(cy))
 
-        # Throttle fill + line
+        t_pts = [(xp(i), cy - v * half_h) for i, v in enumerate(thr)]
+        b_pts = [(xp(i), cy + v * half_h) for i, v in enumerate(brk)]
+
+        # Fills (straight lineTo is fine — interior not visible)
         t_fill = QPainterPath()
         t_fill.moveTo(xp(0), cy)
-        for i, v in enumerate(thr):
-            t_fill.lineTo(xp(i), cy - v * half_h)
+        for x, y in t_pts:
+            t_fill.lineTo(x, y)
         t_fill.lineTo(xp(n - 1), cy)
         t_fill.closeSubpath()
         painter.setPen(Qt.PenStyle.NoPen)
         painter.fillPath(t_fill, QBrush(QColor(0x2e, 0xcc, 0x71, int(120 * self._line_alpha))))
 
-        t_line = QPainterPath()
-        t_line.moveTo(xp(0), cy - thr[0] * half_h)
-        for i, v in enumerate(thr[1:], 1):
-            t_line.lineTo(xp(i), cy - v * half_h)
-        painter.strokePath(t_line, QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
-
-        # Brake fill + line
         b_fill = QPainterPath()
         b_fill.moveTo(xp(0), cy)
-        for i, v in enumerate(brk):
-            b_fill.lineTo(xp(i), cy + v * half_h)
+        for x, y in b_pts:
+            b_fill.lineTo(x, y)
         b_fill.lineTo(xp(n - 1), cy)
         b_fill.closeSubpath()
         painter.fillPath(b_fill, QBrush(QColor(0xe7, 0x4c, 0x3c, int(120 * self._line_alpha))))
 
-        b_line = QPainterPath()
-        b_line.moveTo(xp(0), cy + brk[0] * half_h)
-        for i, v in enumerate(brk[1:], 1):
-            b_line.lineTo(xp(i), cy + v * half_h)
-        painter.strokePath(b_line, QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
+        # Smooth edge lines
+        painter.strokePath(self._smooth(t_pts),
+                           QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
+        painter.strokePath(self._smooth(b_pts),
+                           QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
 
     def _paint_lines(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
         """Both throttle and brake rise from the same baseline, lines only."""
         base_y = float(pad_y + gh)
 
-        # Baseline
         painter.setPen(QPen(QColor(70, 70, 70, int(160 * self._bg_alpha)), 1.0))
         painter.drawLine(pad_x, int(base_y), pad_x + gw, int(base_y))
 
-        t_line = QPainterPath()
-        t_line.moveTo(xp(0), base_y - thr[0] * gh)
-        for i, v in enumerate(thr[1:], 1):
-            t_line.lineTo(xp(i), base_y - v * gh)
-        painter.strokePath(t_line, QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
+        t_pts = [(xp(i), base_y - v * gh) for i, v in enumerate(thr)]
+        b_pts = [(xp(i), base_y - v * gh) for i, v in enumerate(brk)]
 
-        b_line = QPainterPath()
-        b_line.moveTo(xp(0), base_y - brk[0] * gh)
-        for i, v in enumerate(brk[1:], 1):
-            b_line.lineTo(xp(i), base_y - v * gh)
-        painter.strokePath(b_line, QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
+        painter.strokePath(self._smooth(t_pts),
+                           QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
+        painter.strokePath(self._smooth(b_pts),
+                           QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
