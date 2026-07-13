@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.3.2 — 2026-07-13
+### Added
+- **Gradient background** — the main window background fades diagonally from near-black (top-left) to a muted accent color (bottom-right); toggle with the new "Gradient background" checkbox in Settings → APPEARANCE; defaults to on; the gradient tracks the accent color picker live
+
 ## v1.3.1 — 2026-07-12
 ### Fixed
 - **Tray exit no longer hangs or leaves a ghost overlay** — `_quit()` now stops the overlay timer and hides the overlay immediately, signals all background threads without joining them (all threads are daemon and die with the process), and uses `os._exit(0)` to guarantee the process exits regardless of any thread state; previously `engine.stop()` blocked the Qt main thread for up to 5 seconds while joining a socket thread, during which the overlay remained visible

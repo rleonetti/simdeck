@@ -15,7 +15,7 @@ import webbrowser
 from collections import deque
 from typing import Callable
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -399,15 +399,39 @@ QTabBar#main_tab_bar::tab:hover:!selected {
     background: #202020;
     border-bottom: 3px solid #404040;
 }
+
+%%CENTRAL_BG%%
 """
 
 
-def _build_stylesheet(accent: str = "#f0a500") -> str:
+def _blend(c1: QColor, c2: QColor, t: float) -> QColor:
+    """Linearly interpolate RGB between c1 (t=0) and c2 (t=1)."""
+    r = int(c1.red()   + (c2.red()   - c1.red())   * t)
+    g = int(c1.green() + (c2.green() - c1.green()) * t)
+    b = int(c1.blue()  + (c2.blue()  - c1.blue())  * t)
+    return QColor(r, g, b)
+
+
+def _build_stylesheet(accent: str = "#f0a500", gradient: bool = True) -> str:
     dark = QColor(accent).darker(125).name()
-    return _APP_STYLESHEET_TPL.replace("%%ACCENT%%", accent).replace("%%DARK%%", dark)
+    if gradient:
+        muted = _blend(QColor(accent), QColor("#323232"), 0.55).name()
+        central_bg = (
+            f"QWidget#sd_central {{"
+            f" background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+            f" stop:0 #0a0a0a, stop:0.5 #202020, stop:1 {muted}); }}"
+        )
+    else:
+        central_bg = "QWidget#sd_central { background-color: #1c1c1c; }"
+    return (
+        _APP_STYLESHEET_TPL
+        .replace("%%ACCENT%%", accent)
+        .replace("%%DARK%%", dark)
+        .replace("%%CENTRAL_BG%%", central_bg)
+    )
 
 
-def _apply_dark_theme(app: QApplication, accent: str = "#f0a500") -> None:
+def _apply_dark_theme(app: QApplication, accent: str = "#f0a500", gradient: bool = True) -> None:
     app.setStyle("Fusion")
     p = QPalette()
     p.setColor(QPalette.ColorRole.Window,          QColor(28, 28, 28))
@@ -426,7 +450,7 @@ def _apply_dark_theme(app: QApplication, accent: str = "#f0a500") -> None:
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(100, 100, 100))
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(100, 100, 100))
     app.setPalette(p)
-    app.setStyleSheet(_build_stylesheet(accent))
+    app.setStyleSheet(_build_stylesheet(accent, gradient))
 
 
 class _UISignal(QObject):
@@ -2559,7 +2583,8 @@ class SettingsTab(QWidget):
                  on_overlay_theme_change: Callable[[str], None] | None = None,
                  on_overlay_bg_opacity_change: Callable[[int], None] | None = None,
                  on_overlay_line_opacity_change: Callable[[int], None] | None = None,
-                 on_overlay_scale_change: Callable[[int], None] | None = None) -> None:
+                 on_overlay_scale_change: Callable[[int], None] | None = None,
+                 on_gradient_change: Callable[[bool], None] | None = None) -> None:
         super().__init__()
         self._on_font_change                  = on_font_change
         self._on_check_update                 = on_check_update
@@ -2573,6 +2598,7 @@ class SettingsTab(QWidget):
         self._on_overlay_bg_opacity_change    = on_overlay_bg_opacity_change or (lambda _: None)
         self._on_overlay_line_opacity_change  = on_overlay_line_opacity_change or (lambda _: None)
         self._on_overlay_scale_change         = on_overlay_scale_change or (lambda _: None)
+        self._on_gradient_change              = on_gradient_change or (lambda _: None)
         self._download_url: str               = ""
         self._build(settings)
 
@@ -2638,6 +2664,13 @@ class SettingsTab(QWidget):
 
         self._accent_color = settings.get("accent_color", "#f0a500")
         self._update_accent_swatch()
+
+        cv.addSpacing(8)
+        gradient_cb = QCheckBox("Gradient background")
+        gradient_cb.setChecked(settings.get("gradient_bg", True))
+        gradient_cb.setToolTip("Fade the window background diagonally from black/grey into the accent color")
+        gradient_cb.stateChanged.connect(lambda _: self._on_gradient_change(gradient_cb.isChecked()))
+        cv.addWidget(gradient_cb)
 
         # ── UPDATES ───────────────────────────────────────────────────────────
         cv.addSpacing(16)
@@ -3170,6 +3203,7 @@ class SimDeckApp(QMainWindow):
             "overlay_scale":        settings.get("overlay_scale",        100),
             "overlay_x":            settings.get("overlay_x",            None),
             "overlay_y":            settings.get("overlay_y",            None),
+            "gradient_bg":          settings.get("gradient_bg",          True),
         }
 
         lights     = settings.get("lights", [])
@@ -3208,6 +3242,7 @@ class SimDeckApp(QMainWindow):
 
         # Central widget
         central = QWidget()
+        central.setObjectName("sd_central")
         self.setCentralWidget(central)
         main_v = QVBoxLayout(central)
         main_v.setContentsMargins(0, 0, 0, 0)
@@ -3275,6 +3310,7 @@ class SimDeckApp(QMainWindow):
             on_overlay_bg_opacity_change=self._on_overlay_bg_opacity_change,
             on_overlay_line_opacity_change=self._on_overlay_line_opacity_change,
             on_overlay_scale_change=self._on_overlay_scale_change,
+            on_gradient_change=self._on_gradient_change,
         )
         main_tabs.addTab(self._settings_tab, "Settings")
 
@@ -3361,9 +3397,20 @@ class SimDeckApp(QMainWindow):
         self._app_settings["font_size_pt"] = size_pt
         self._save_settings()
 
+    def _refresh_theme_stylesheet(self) -> None:
+        QApplication.instance().setStyleSheet(
+            _build_stylesheet(self._app_settings["accent_color"],
+                              self._app_settings["gradient_bg"])
+        )
+
     def _on_accent_change(self, color: str) -> None:
         self._app_settings["accent_color"] = color
-        QApplication.instance().setStyleSheet(_build_stylesheet(color))
+        self._refresh_theme_stylesheet()
+        self._save_settings()
+
+    def _on_gradient_change(self, enabled: bool) -> None:
+        self._app_settings["gradient_bg"] = enabled
+        self._refresh_theme_stylesheet()
         self._save_settings()
 
     def _on_startup_change(self, launch: bool, minimized: bool) -> None:
@@ -3630,8 +3677,10 @@ class SimDeckApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    _init_accent = settings_manager.load().get("accent_color", "#f0a500")
-    _apply_dark_theme(app, _init_accent)
+    _init_settings = settings_manager.load()
+    _init_accent   = _init_settings.get("accent_color", "#f0a500")
+    _init_gradient = _init_settings.get("gradient_bg",  True)
+    _apply_dark_theme(app, _init_accent, _init_gradient)
     window = SimDeckApp()
     if not window.start_minimized:
         window.show()
