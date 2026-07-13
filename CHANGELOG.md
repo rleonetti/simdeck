@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.2.6 — 2026-07-12
+### Added
+- **Telemetry overlay** — floating, always-on-top, transparent window showing a real-time scrolling throttle/brake graph; throttle (green) fills upward from center, brake (red) fills downward; draggable, position saved between sessions; toggle and opacity slider under Settings → OVERLAY
+
 ## v1.2.5 — 2026-07-12
 ### Added
 - Vehicle and track shown in Logger tab during active recording (suppresses internal codes like Forza's `DT__*` track identifiers)
