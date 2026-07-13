@@ -1,4 +1,4 @@
 """Thin launcher used by PyInstaller — not intended for direct use."""
-from simdeck.simdeck import main
+from simdeck.ui.app import main
 
 main()

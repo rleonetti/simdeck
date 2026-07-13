@@ -1,7 +1,7 @@
 """Entry point for `python -m simdeck`."""
 from __future__ import annotations
 
-from simdeck.simdeck import main
+from simdeck.ui.app import main
 
 if __name__ == "__main__":
     main()
