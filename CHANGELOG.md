@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.1 — 2026-07-12
+### Fixed
+- **Tray exit no longer hangs or leaves a ghost overlay** — `_quit()` now stops the overlay timer and hides the overlay immediately, signals all background threads without joining them (all threads are daemon and die with the process), and uses `os._exit(0)` to guarantee the process exits regardless of any thread state; previously `engine.stop()` blocked the Qt main thread for up to 5 seconds while joining a socket thread, during which the overlay remained visible
+
+## v1.3.0 — 2026-07-12
+### Changed
+- **Moza pedal integration rewritten to use USB HID** — reads directly from the R12 Base joystick interface (VID=0x346E, PID=0x0016) instead of the serial protocol; HID is shared-access so it works alongside Pit House with no port conflicts
+- Replaced `pyserial` dependency with `hidapi`
+
+### Added
+- **Clutch trace** (blue) added to the telemetry overlay; both Mirrored and Lines themes now show throttle (green), brake (red), and clutch (blue)
+
 ## v1.2.9 — 2026-07-12
 ### Added
 - **Moza pedal integration** — reads `throttle-output` and `brake-output` directly from Moza hardware via USB serial at ~100 Hz; overlay automatically switches to hardware data when pedals are detected, falls back to SimHub telemetry otherwise

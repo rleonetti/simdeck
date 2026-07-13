@@ -7,6 +7,7 @@ Run this file for the GUI experience.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import urllib.request
@@ -14,7 +15,7 @@ import webbrowser
 from collections import deque
 from typing import Callable
 
-__version__ = "1.2.9"
+__version__ = "1.3.1"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2964,6 +2965,7 @@ class TelemetryOverlay(QWidget):
         self._moza       = moza
         self._throttle: deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
         self._brake:    deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
+        self._clutch:   deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
         self._bg_alpha   = 0.70
         self._line_alpha = 1.0
         self._scale      = 100
@@ -3001,12 +3003,15 @@ class TelemetryOverlay(QWidget):
         if self._moza and self._moza.connected:
             thr = self._moza.throttle
             brk = self._moza.brake
+            clu = self._moza.clutch
         else:
             tel = self._engine.get_telemetry()
             thr = max(0.0, min(1.0, float(tel.get("throttle", 0.0)) / 100.0))
             brk = max(0.0, min(1.0, float(tel.get("brake",    0.0)) / 100.0))
+            clu = max(0.0, min(1.0, float(tel.get("clutch",   0.0)) / 100.0))
         self._throttle.append(thr)
         self._brake.append(brk)
+        self._clutch.append(clu)
         self.update()
 
     def paintEvent(self, _) -> None:
@@ -3029,14 +3034,15 @@ class TelemetryOverlay(QWidget):
         n   = _OVL_HISTORY
         thr = list(self._throttle)
         brk = list(self._brake)
+        clu = list(self._clutch)
 
         def xp(i: int) -> float:
             return pad_x + i * gw / max(n - 1, 1)
 
         if self._theme == self.THEME_MIRRORED:
-            self._paint_mirrored(painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w)
+            self._paint_mirrored(painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w)
         else:
-            self._paint_lines(painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w)
+            self._paint_lines(painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w)
 
         painter.end()
 
@@ -3061,8 +3067,8 @@ class TelemetryOverlay(QWidget):
         path.lineTo(pts[-1][0], pts[-1][1])
         return path
 
-    def _paint_mirrored(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
-        """Throttle fills upward from center; brake fills downward from center."""
+    def _paint_mirrored(self, painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w) -> None:
+        """Throttle fills upward from center; brake fills downward from center; clutch line above center."""
         cy     = pad_y + gh / 2.0
         half_h = gh / 2.0 - 1
         n      = _OVL_HISTORY
@@ -3072,6 +3078,7 @@ class TelemetryOverlay(QWidget):
 
         t_pts = [(xp(i), cy - v * half_h) for i, v in enumerate(thr)]
         b_pts = [(xp(i), cy + v * half_h) for i, v in enumerate(brk)]
+        c_pts = [(xp(i), cy - v * half_h) for i, v in enumerate(clu)]
 
         # Fills (straight lineTo is fine — interior not visible)
         t_fill = QPainterPath()
@@ -3096,9 +3103,11 @@ class TelemetryOverlay(QWidget):
                            QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
         painter.strokePath(self._smooth(b_pts),
                            QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
+        painter.strokePath(self._smooth(c_pts),
+                           QPen(QColor(0x3a, 0x9b, 0xdc, int(200 * self._line_alpha)), line_w))
 
-    def _paint_lines(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
-        """Both throttle and brake rise from the same baseline, lines only."""
+    def _paint_lines(self, painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w) -> None:
+        """Throttle, brake, and clutch all rise from the same baseline, lines only."""
         base_y = float(pad_y + gh)
 
         painter.setPen(QPen(QColor(70, 70, 70, int(160 * self._bg_alpha)), 1.0))
@@ -3106,11 +3115,14 @@ class TelemetryOverlay(QWidget):
 
         t_pts = [(xp(i), base_y - v * gh) for i, v in enumerate(thr)]
         b_pts = [(xp(i), base_y - v * gh) for i, v in enumerate(brk)]
+        c_pts = [(xp(i), base_y - v * gh) for i, v in enumerate(clu)]
 
         painter.strokePath(self._smooth(t_pts),
                            QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
         painter.strokePath(self._smooth(b_pts),
                            QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
+        painter.strokePath(self._smooth(c_pts),
+                           QPen(QColor(0x3a, 0x9b, 0xdc, int(200 * self._line_alpha)), line_w))
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -3588,14 +3600,23 @@ class SimDeckApp(QMainWindow):
         self._app_settings["overlay_x"] = pos.x()
         self._app_settings["overlay_y"] = pos.y()
         self._save_settings()
+
+        # Stop UI timers and remove overlay from screen immediately
         self._poll_timer.stop()
         self._game_timer.stop()
+        self._overlay._timer.stop()
+        self._overlay.hide()
+
+        # Signal background threads to stop — no join needed, all are daemon=True
+        # and will die when the process exits; joining on the main thread risks
+        # blocking for seconds if a LIFX/SimHub socket call is in progress.
         self._moza.stop()
-        self._engine.stop()
-        self._splitter.stop()
+        self._engine._stop_event.set()
+        self._splitter._stop_event.set()
         if self._tray:
             self._tray.stop()
-        QApplication.instance().quit()
+
+        os._exit(0)
 
     @property
     def start_minimized(self) -> bool:
