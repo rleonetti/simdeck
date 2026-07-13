@@ -14,7 +14,7 @@ import webbrowser
 from collections import deque
 from typing import Callable
 
-__version__ = "1.2.7"
+__version__ = "1.2.8"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2554,6 +2554,7 @@ class SettingsTab(QWidget):
                  on_install_update: Callable[[str], None] | None = None,
                  on_pulse_change: Callable[[bool], None] | None = None,
                  on_overlay_change: Callable[[bool], None] | None = None,
+                 on_overlay_theme_change: Callable[[str], None] | None = None,
                  on_overlay_bg_opacity_change: Callable[[int], None] | None = None,
                  on_overlay_line_opacity_change: Callable[[int], None] | None = None,
                  on_overlay_scale_change: Callable[[int], None] | None = None) -> None:
@@ -2566,6 +2567,7 @@ class SettingsTab(QWidget):
         self._on_install_update               = on_install_update
         self._on_pulse_change                 = on_pulse_change or (lambda _: None)
         self._on_overlay_change               = on_overlay_change or (lambda _: None)
+        self._on_overlay_theme_change         = on_overlay_theme_change or (lambda _: None)
         self._on_overlay_bg_opacity_change    = on_overlay_bg_opacity_change or (lambda _: None)
         self._on_overlay_line_opacity_change  = on_overlay_line_opacity_change or (lambda _: None)
         self._on_overlay_scale_change         = on_overlay_scale_change or (lambda _: None)
@@ -2690,6 +2692,24 @@ class SettingsTab(QWidget):
         overlay_cb.setToolTip("Display the floating brake/throttle input graph")
         overlay_cb.stateChanged.connect(lambda _: self._on_overlay_change(overlay_cb.isChecked()))
         cv.addWidget(overlay_cb)
+        cv.addSpacing(8)
+
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(10)
+        theme_lbl = QLabel("Style")
+        theme_lbl.setFixedWidth(130)
+        theme_row.addWidget(theme_lbl)
+        theme_combo = QComboBox()
+        theme_combo.addItem("Mirrored (fill)",  "mirrored")
+        theme_combo.addItem("Lines (baseline)", "lines")
+        saved_theme = settings.get("overlay_theme", "mirrored")
+        theme_combo.setCurrentIndex(0 if saved_theme == "mirrored" else 1)
+        theme_combo.currentIndexChanged.connect(
+            lambda _: self._on_overlay_theme_change(theme_combo.currentData())
+        )
+        theme_row.addWidget(theme_combo)
+        theme_row.addStretch()
+        cv.addLayout(theme_row)
         cv.addSpacing(10)
 
         def _ovl_slider_row(label: str, key: str, default: int,
@@ -2900,7 +2920,10 @@ _OVL_HISTORY  = 200   # ~10s at 20Hz
 
 
 class TelemetryOverlay(QWidget):
-    """Frameless always-on-top window: throttle (green) and brake (red) lines, both above baseline."""
+    """Frameless always-on-top window with two rendering themes."""
+
+    THEME_MIRRORED = "mirrored"   # throttle above / brake below center line, filled
+    THEME_LINES    = "lines"      # both lines rise from baseline, no fill
 
     def __init__(self, engine: "Engine") -> None:
         super().__init__(
@@ -2918,6 +2941,7 @@ class TelemetryOverlay(QWidget):
         self._bg_alpha   = 0.70
         self._line_alpha = 1.0
         self._scale      = 100
+        self._theme      = self.THEME_MIRRORED
         self._drag_pos   = None
         self._apply_size()
 
@@ -2943,6 +2967,10 @@ class TelemetryOverlay(QWidget):
         self._apply_size()
         self.update()
 
+    def set_theme(self, theme: str) -> None:
+        self._theme = theme
+        self.update()
+
     def _tick(self) -> None:
         tel = self._engine.get_telemetry()
         self._throttle.append(max(0.0, min(1.0, float(tel.get("throttle", 0.0)) / 100.0)))
@@ -2954,22 +2982,17 @@ class TelemetryOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        w, h   = self.width(), self.height()
-        pad_x  = 10
-        pad_y  = 8
-        gw     = w - pad_x * 2
-        gh     = h - pad_y * 2
-        base_y = float(pad_y + gh)   # y=0 at bottom
+        w, h  = self.width(), self.height()
+        pad_x = 10
+        pad_y = 8
+        gw    = w - pad_x * 2
+        gh    = h - pad_y * 2
         line_w = max(1.0, 1.5 * self._scale / 100.0)
 
         # Background
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(QColor(12, 12, 12, int(220 * self._bg_alpha))))
         painter.drawRoundedRect(QRectF(0, 0, w, h), 8, 8)
-
-        # Baseline
-        painter.setPen(QPen(QColor(70, 70, 70, int(160 * self._bg_alpha)), 1.0))
-        painter.drawLine(pad_x, int(base_y), pad_x + gw, int(base_y))
 
         n   = _OVL_HISTORY
         thr = list(self._throttle)
@@ -2978,21 +3001,73 @@ class TelemetryOverlay(QWidget):
         def xp(i: int) -> float:
             return pad_x + i * gw / max(n - 1, 1)
 
-        # Throttle (green) — rises from baseline
+        if self._theme == self.THEME_MIRRORED:
+            self._paint_mirrored(painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w)
+        else:
+            self._paint_lines(painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w)
+
+        painter.end()
+
+    def _paint_mirrored(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
+        """Throttle fills upward from center; brake fills downward from center."""
+        cy     = pad_y + gh / 2.0
+        half_h = gh / 2.0 - 1
+        n      = _OVL_HISTORY
+
+        # Center divider
+        painter.setPen(QPen(QColor(70, 70, 70, int(180 * self._bg_alpha)), 1.0))
+        painter.drawLine(pad_x, int(cy), pad_x + gw, int(cy))
+
+        # Throttle fill + line
+        t_fill = QPainterPath()
+        t_fill.moveTo(xp(0), cy)
+        for i, v in enumerate(thr):
+            t_fill.lineTo(xp(i), cy - v * half_h)
+        t_fill.lineTo(xp(n - 1), cy)
+        t_fill.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.fillPath(t_fill, QBrush(QColor(0x2e, 0xcc, 0x71, int(120 * self._line_alpha))))
+
+        t_line = QPainterPath()
+        t_line.moveTo(xp(0), cy - thr[0] * half_h)
+        for i, v in enumerate(thr[1:], 1):
+            t_line.lineTo(xp(i), cy - v * half_h)
+        painter.strokePath(t_line, QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
+
+        # Brake fill + line
+        b_fill = QPainterPath()
+        b_fill.moveTo(xp(0), cy)
+        for i, v in enumerate(brk):
+            b_fill.lineTo(xp(i), cy + v * half_h)
+        b_fill.lineTo(xp(n - 1), cy)
+        b_fill.closeSubpath()
+        painter.fillPath(b_fill, QBrush(QColor(0xe7, 0x4c, 0x3c, int(120 * self._line_alpha))))
+
+        b_line = QPainterPath()
+        b_line.moveTo(xp(0), cy + brk[0] * half_h)
+        for i, v in enumerate(brk[1:], 1):
+            b_line.lineTo(xp(i), cy + v * half_h)
+        painter.strokePath(b_line, QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
+
+    def _paint_lines(self, painter, thr, brk, xp, pad_x, pad_y, gw, gh, line_w) -> None:
+        """Both throttle and brake rise from the same baseline, lines only."""
+        base_y = float(pad_y + gh)
+
+        # Baseline
+        painter.setPen(QPen(QColor(70, 70, 70, int(160 * self._bg_alpha)), 1.0))
+        painter.drawLine(pad_x, int(base_y), pad_x + gw, int(base_y))
+
         t_line = QPainterPath()
         t_line.moveTo(xp(0), base_y - thr[0] * gh)
         for i, v in enumerate(thr[1:], 1):
             t_line.lineTo(xp(i), base_y - v * gh)
         painter.strokePath(t_line, QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
 
-        # Brake (red) — also rises from baseline
         b_line = QPainterPath()
         b_line.moveTo(xp(0), base_y - brk[0] * gh)
         for i, v in enumerate(brk[1:], 1):
             b_line.lineTo(xp(i), base_y - v * gh)
         painter.strokePath(b_line, QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
-
-        painter.end()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -3034,6 +3109,7 @@ class SimDeckApp(QMainWindow):
             "simhub_port":       settings.get("simhub_port",       config.SIMHUB_PORT),
             "update_dot_pulse":  settings.get("update_dot_pulse",  True),
             "overlay_visible":      settings.get("overlay_visible",      False),
+            "overlay_theme":        settings.get("overlay_theme",        "mirrored"),
             "overlay_bg_opacity":   settings.get("overlay_bg_opacity",   70),
             "overlay_line_opacity": settings.get("overlay_line_opacity", 100),
             "overlay_scale":        settings.get("overlay_scale",        100),
@@ -3140,6 +3216,7 @@ class SimDeckApp(QMainWindow):
             on_install_update=self._do_install_update,
             on_pulse_change=self._on_pulse_change,
             on_overlay_change=self._on_overlay_show_change,
+            on_overlay_theme_change=self._on_overlay_theme_change,
             on_overlay_bg_opacity_change=self._on_overlay_bg_opacity_change,
             on_overlay_line_opacity_change=self._on_overlay_line_opacity_change,
             on_overlay_scale_change=self._on_overlay_scale_change,
@@ -3183,6 +3260,7 @@ class SimDeckApp(QMainWindow):
 
         # Telemetry overlay
         self._overlay = TelemetryOverlay(self._engine)
+        self._overlay.set_theme(     self._app_settings["overlay_theme"])
         self._overlay.set_bg_alpha(  self._app_settings["overlay_bg_opacity"]   / 100.0)
         self._overlay.set_line_alpha(self._app_settings["overlay_line_opacity"]  / 100.0)
         self._overlay.set_scale(     self._app_settings["overlay_scale"])
@@ -3347,6 +3425,11 @@ class SimDeckApp(QMainWindow):
 
         settings_idx = self._main_tabs.count() - 1
         self._main_tabs.tabBar().setTabButton(settings_idx, QTabBar.ButtonPosition.RightSide, dot)
+
+    def _on_overlay_theme_change(self, theme: str) -> None:
+        self._app_settings["overlay_theme"] = theme
+        self._save_settings()
+        self._overlay.set_theme(theme)
 
     def _on_overlay_show_change(self, visible: bool) -> None:
         self._app_settings["overlay_visible"] = visible

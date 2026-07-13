@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.2.8 — 2026-07-12
+### Added
+- Overlay style dropdown in Settings → OVERLAY: **Mirrored** (throttle fill above / brake fill below center line) and **Lines** (both traces rise from baseline, no fill); selection persists between sessions
+
 ## v1.2.7 — 2026-07-12
 ### Changed
 - Overlay redrawn as lines-only (no fill): throttle (green) and brake (red) both rise from baseline in the same plane
