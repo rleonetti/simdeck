@@ -2,7 +2,7 @@
 
 1. **Bump version** in two places:
    - `simdeck.py` → `__version__ = "X.X.X"`
-   - `installer.iss` → `#define AppVersion "X.X.X"`
+   - `packaging/windows/installer.iss` → `#define AppVersion "X.X.X"`
 
 2. **Update docs:**
    - `CHANGELOG.md` — add a section for the new version with today's date and bullet points under Added / Changed / Fixed
@@ -10,19 +10,19 @@
 
 3. **Commit and push:**
    ```
-   git add simdeck.py installer.iss CHANGELOG.md README.md
+   git add simdeck.py packaging/windows/installer.iss CHANGELOG.md README.md
    git commit -m "vX.X.X — describe what changed"
    git push origin master
    ```
 
 4. **Build the exe** (assets are bundled automatically via `SimDeck.spec`):
    ```
-   pyinstaller SimDeck.spec --clean -y
+   pyinstaller packaging/pyinstaller/SimDeck.spec --clean -y
    ```
 
 5. **Build the installer:**
    ```
-   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss
    ```
    Output: `installer_output\SimDeck-X.X.X-setup.exe`
 

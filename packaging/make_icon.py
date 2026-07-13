@@ -94,7 +94,7 @@ def _build_ico(frames: dict[int, Image.Image]) -> bytes:
 
 
 if __name__ == "__main__":
-    out = Path(__file__).parent / "simdeck.ico"
+    out = Path(__file__).parent.parent / "assets" / "simdeck.ico"
     print(f"Rendering {len(SIZES)} sizes: {SIZES}")
     frames = {sz: _render(sz) for sz in SIZES}
     data = _build_ico(frames)

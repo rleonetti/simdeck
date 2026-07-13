@@ -3,7 +3,7 @@
 #define AppPublisher "rleonetti"
 #define AppURL "https://github.com/rleonetti/simdeck"
 #define AppExeName "SimDeck.exe"
-#define SourceDir "dist\SimDeck"
+#define SourceDir "..\..\dist\SimDeck"
 
 [Setup]
 AppId={{E4A2F3B1-7C9D-4E2A-B8F6-1D3A5C7E9B2D}
@@ -16,9 +16,9 @@ AppUpdatesURL={#AppURL}/releases
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
-OutputDir=installer_output
+OutputDir=..\..\installer_output
 OutputBaseFilename=SimDeck-{#AppVersion}-setup
-SetupIconFile=simdeck.ico
+SetupIconFile=..\..\assets\simdeck.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -34,8 +34,8 @@ Name: "startupicon"; Description: "Start SimDeck automatically when Windows star
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "simdeck_button.png"; DestDir: "{app}"; Flags: ignoreversion
-Source: "simdeck_button@2x.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\assets\simdeck_button.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\assets\simdeck_button@2x.png"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\simdeck.ico"

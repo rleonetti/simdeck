@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets')]
+# SPECPATH is the directory containing this spec file (packaging/pyinstaller/).
+# Walk two levels up to get the repo root so all paths below are absolute.
+_root = os.path.normpath(os.path.join(SPECPATH, '..', '..'))
+
+datas = [(os.path.join(_root, 'assets'), 'assets')]
 binaries = []
 hiddenimports = []
 
@@ -14,7 +19,7 @@ hiddenimports += _hidden
 
 
 a = Analysis(
-    ['simdeck.py'],
+    [os.path.join(_root, 'simdeck.py')],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -44,7 +49,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['simdeck.ico'],
+    icon=[os.path.join(_root, 'assets', 'simdeck.ico')],
 )
 coll = COLLECT(
     exe,
