@@ -2891,6 +2891,7 @@ class SimDeckApp(QMainWindow):
         main_v.setSpacing(0)
 
         main_tabs = _MainTabWidget()
+        self._main_tabs = main_tabs
         main_v.addWidget(main_tabs, stretch=1)
 
         # ── Light Control ──────────────────────────────────────────────────
@@ -3103,6 +3104,14 @@ class SimDeckApp(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def _show_update_dot(self) -> None:
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet("background: #2ecc71; border-radius: 4px; margin-right: 2px;")
+        dot.setToolTip("Update available")
+        settings_idx = self._main_tabs.count() - 1
+        self._main_tabs.tabBar().setTabButton(settings_idx, QTabBar.ButtonPosition.RightSide, dot)
+
     def _bg_update_check(self) -> None:
         result = _check_for_update()
         if result:
@@ -3111,6 +3120,7 @@ class SimDeckApp(QMainWindow):
             self._update_download_url = url
             self._ui.call.emit(lambda: self._tray.update_menu())
             self._ui.call.emit(lambda: self._settings_tab.set_update_available(ver, url))
+            self._ui.call.emit(self._show_update_dot)
 
     def _manual_update_check(self) -> None:
         def _worker() -> None:
@@ -3125,6 +3135,7 @@ class SimDeckApp(QMainWindow):
                 except Exception:
                     pass
                 self._ui.call.emit(lambda: self._settings_tab.set_update_result(ver, url))
+                self._ui.call.emit(self._show_update_dot)
             else:
                 self._ui.call.emit(lambda: self._settings_tab.set_update_result(None))
         threading.Thread(target=_worker, daemon=True).start()
