@@ -14,7 +14,7 @@ import webbrowser
 from collections import deque
 from typing import Callable
 
-__version__ = "1.2.6"
+__version__ = "1.2.7"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -2554,18 +2554,22 @@ class SettingsTab(QWidget):
                  on_install_update: Callable[[str], None] | None = None,
                  on_pulse_change: Callable[[bool], None] | None = None,
                  on_overlay_change: Callable[[bool], None] | None = None,
-                 on_overlay_opacity_change: Callable[[int], None] | None = None) -> None:
+                 on_overlay_bg_opacity_change: Callable[[int], None] | None = None,
+                 on_overlay_line_opacity_change: Callable[[int], None] | None = None,
+                 on_overlay_scale_change: Callable[[int], None] | None = None) -> None:
         super().__init__()
-        self._on_font_change              = on_font_change
-        self._on_check_update             = on_check_update
-        self._on_startup_change           = on_startup_change
-        self._on_simhub_change            = on_simhub_change
-        self._on_accent_change            = on_accent_change or (lambda _: None)
-        self._on_install_update           = on_install_update
-        self._on_pulse_change             = on_pulse_change or (lambda _: None)
-        self._on_overlay_change           = on_overlay_change or (lambda _: None)
-        self._on_overlay_opacity_change   = on_overlay_opacity_change or (lambda _: None)
-        self._download_url: str           = ""
+        self._on_font_change                  = on_font_change
+        self._on_check_update                 = on_check_update
+        self._on_startup_change               = on_startup_change
+        self._on_simhub_change                = on_simhub_change
+        self._on_accent_change                = on_accent_change or (lambda _: None)
+        self._on_install_update               = on_install_update
+        self._on_pulse_change                 = on_pulse_change or (lambda _: None)
+        self._on_overlay_change               = on_overlay_change or (lambda _: None)
+        self._on_overlay_bg_opacity_change    = on_overlay_bg_opacity_change or (lambda _: None)
+        self._on_overlay_line_opacity_change  = on_overlay_line_opacity_change or (lambda _: None)
+        self._on_overlay_scale_change         = on_overlay_scale_change or (lambda _: None)
+        self._download_url: str               = ""
         self._build(settings)
 
     def _build(self, settings: dict) -> None:
@@ -2676,7 +2680,7 @@ class SettingsTab(QWidget):
         cv.addWidget(self._section_hdr("OVERLAY"))
         cv.addSpacing(10)
 
-        overlay_desc = QLabel("Transparent always-on-top graph showing throttle and brake input.")
+        overlay_desc = QLabel("Transparent always-on-top graph: throttle (green) and brake (red) traces.")
         overlay_desc.setStyleSheet(f"color: {_MUTED};")
         cv.addWidget(overlay_desc)
         cv.addSpacing(8)
@@ -2686,34 +2690,38 @@ class SettingsTab(QWidget):
         overlay_cb.setToolTip("Display the floating brake/throttle input graph")
         overlay_cb.stateChanged.connect(lambda _: self._on_overlay_change(overlay_cb.isChecked()))
         cv.addWidget(overlay_cb)
-        cv.addSpacing(8)
+        cv.addSpacing(10)
 
-        opacity_row = QHBoxLayout()
-        opacity_row.setSpacing(10)
-        opacity_lbl = QLabel("Opacity")
-        opacity_lbl.setFixedWidth(100)
-        opacity_row.addWidget(opacity_lbl)
+        def _ovl_slider_row(label: str, key: str, default: int,
+                            lo: int, hi: int, tick: int,
+                            unit: str, cb: Callable) -> None:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            lbl = QLabel(label)
+            lbl.setFixedWidth(130)
+            row.addWidget(lbl)
+            sl = QSlider(Qt.Orientation.Horizontal)
+            sl.setRange(lo, hi)
+            sl.setValue(settings.get(key, default))
+            sl.setFixedWidth(180)
+            sl.setTickPosition(QSlider.TickPosition.TicksBelow)
+            sl.setTickInterval(tick)
+            row.addWidget(sl)
+            val_lbl = QLabel(f"{sl.value()}{unit}")
+            val_lbl.setStyleSheet(f"color: {_MUTED};")
+            val_lbl.setFixedWidth(44)
+            row.addWidget(val_lbl)
+            row.addStretch()
+            cv.addLayout(row)
+            cv.addSpacing(6)
+            sl.valueChanged.connect(lambda v, vl=val_lbl, u=unit, c=cb: (vl.setText(f"{v}{u}"), c(v)))
 
-        self._overlay_opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._overlay_opacity_slider.setRange(20, 100)
-        self._overlay_opacity_slider.setValue(settings.get("overlay_opacity", 85))
-        self._overlay_opacity_slider.setFixedWidth(200)
-        self._overlay_opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self._overlay_opacity_slider.setTickInterval(20)
-        opacity_row.addWidget(self._overlay_opacity_slider)
-
-        self._overlay_opacity_val = QLabel(f"{self._overlay_opacity_slider.value()}%")
-        self._overlay_opacity_val.setStyleSheet(f"color: {_MUTED};")
-        self._overlay_opacity_val.setFixedWidth(40)
-        opacity_row.addWidget(self._overlay_opacity_val)
-        opacity_row.addStretch()
-        cv.addLayout(opacity_row)
-
-        def _on_opacity(val: int) -> None:
-            self._overlay_opacity_val.setText(f"{val}%")
-            self._on_overlay_opacity_change(val)
-
-        self._overlay_opacity_slider.valueChanged.connect(_on_opacity)
+        _ovl_slider_row("Background opacity", "overlay_bg_opacity",   70,  0, 100, 20, "%",
+                        self._on_overlay_bg_opacity_change)
+        _ovl_slider_row("Line opacity",        "overlay_line_opacity", 100, 10, 100, 20, "%",
+                        self._on_overlay_line_opacity_change)
+        _ovl_slider_row("Scale",               "overlay_scale",        100, 50, 200, 25, "%",
+                        self._on_overlay_scale_change)
 
         # ── STARTUP ───────────────────────────────────────────────────────────
         cv.addSpacing(16)
@@ -2892,7 +2900,7 @@ _OVL_HISTORY  = 200   # ~10s at 20Hz
 
 
 class TelemetryOverlay(QWidget):
-    """Frameless always-on-top window: throttle/brake trace, mirrored around center."""
+    """Frameless always-on-top window: throttle (green) and brake (red) lines, both above baseline."""
 
     def __init__(self, engine: "Engine") -> None:
         super().__init__(
@@ -2903,21 +2911,36 @@ class TelemetryOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(_OVL_W, _OVL_H)
 
-        self._engine   = engine
+        self._engine     = engine
         self._throttle: deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
         self._brake:    deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
-        self._alpha    = 0.85
-        self._drag_pos = None
+        self._bg_alpha   = 0.70
+        self._line_alpha = 1.0
+        self._scale      = 100
+        self._drag_pos   = None
+        self._apply_size()
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000 // _OVL_FPS)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
-    def set_alpha(self, alpha: float) -> None:
-        self._alpha = max(0.1, min(1.0, alpha))
+    def _apply_size(self) -> None:
+        self.setFixedSize(max(80, int(_OVL_W * self._scale / 100)),
+                          max(30, int(_OVL_H * self._scale / 100)))
+
+    def set_bg_alpha(self, alpha: float) -> None:
+        self._bg_alpha = max(0.0, min(1.0, alpha))
+        self.update()
+
+    def set_line_alpha(self, alpha: float) -> None:
+        self._line_alpha = max(0.0, min(1.0, alpha))
+        self.update()
+
+    def set_scale(self, pct: int) -> None:
+        self._scale = max(50, min(200, pct))
+        self._apply_size()
         self.update()
 
     def _tick(self) -> None:
@@ -2936,66 +2959,38 @@ class TelemetryOverlay(QWidget):
         pad_y  = 8
         gw     = w - pad_x * 2
         gh     = h - pad_y * 2
-        cy     = pad_y + gh / 2.0   # center-line y
-        half_h = gh / 2.0 - 1
+        base_y = float(pad_y + gh)   # y=0 at bottom
+        line_w = max(1.0, 1.5 * self._scale / 100.0)
 
         # Background
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(12, 12, 12, int(220 * self._alpha))))
+        painter.setBrush(QBrush(QColor(12, 12, 12, int(220 * self._bg_alpha))))
         painter.drawRoundedRect(QRectF(0, 0, w, h), 8, 8)
 
-        # Center divider
-        div_col = QColor(70, 70, 70, int(180 * self._alpha))
-        painter.setPen(QPen(div_col, 1.0))
-        painter.drawLine(pad_x, int(cy), pad_x + gw, int(cy))
-        painter.setPen(Qt.PenStyle.NoPen)
+        # Baseline
+        painter.setPen(QPen(QColor(70, 70, 70, int(160 * self._bg_alpha)), 1.0))
+        painter.drawLine(pad_x, int(base_y), pad_x + gw, int(base_y))
 
-        n = _OVL_HISTORY
+        n   = _OVL_HISTORY
         thr = list(self._throttle)
         brk = list(self._brake)
 
         def xp(i: int) -> float:
             return pad_x + i * gw / max(n - 1, 1)
 
-        # ── Throttle (green) — fills upward from center ──────────────────────
-        t_fill = QPainterPath()
-        t_fill.moveTo(xp(0), cy)
-        for i, v in enumerate(thr):
-            t_fill.lineTo(xp(i), cy - v * half_h)
-        t_fill.lineTo(xp(n - 1), cy)
-        t_fill.closeSubpath()
-        painter.fillPath(t_fill, QBrush(QColor(0x2e, 0xcc, 0x71, int(170 * self._alpha))))
-
+        # Throttle (green) — rises from baseline
         t_line = QPainterPath()
-        t_line.moveTo(xp(0), cy - thr[0] * half_h)
+        t_line.moveTo(xp(0), base_y - thr[0] * gh)
         for i, v in enumerate(thr[1:], 1):
-            t_line.lineTo(xp(i), cy - v * half_h)
-        painter.strokePath(t_line, QPen(QColor(0x27, 0xae, 0x60, int(255 * self._alpha)), 1.5))
+            t_line.lineTo(xp(i), base_y - v * gh)
+        painter.strokePath(t_line, QPen(QColor(0x2e, 0xcc, 0x71, int(255 * self._line_alpha)), line_w))
 
-        # ── Brake (red) — fills downward from center ─────────────────────────
-        b_fill = QPainterPath()
-        b_fill.moveTo(xp(0), cy)
-        for i, v in enumerate(brk):
-            b_fill.lineTo(xp(i), cy + v * half_h)
-        b_fill.lineTo(xp(n - 1), cy)
-        b_fill.closeSubpath()
-        painter.fillPath(b_fill, QBrush(QColor(0xe7, 0x4c, 0x3c, int(170 * self._alpha))))
-
+        # Brake (red) — also rises from baseline
         b_line = QPainterPath()
-        b_line.moveTo(xp(0), cy + brk[0] * half_h)
+        b_line.moveTo(xp(0), base_y - brk[0] * gh)
         for i, v in enumerate(brk[1:], 1):
-            b_line.lineTo(xp(i), cy + v * half_h)
-        painter.strokePath(b_line, QPen(QColor(0xc0, 0x39, 0x2b, int(255 * self._alpha)), 1.5))
-
-        # ── Labels ────────────────────────────────────────────────────────────
-        lbl_col = QColor(200, 200, 200, int(160 * self._alpha))
-        painter.setPen(QPen(lbl_col))
-        f = painter.font()
-        f.setPointSizeF(7.0)
-        f.setBold(True)
-        painter.setFont(f)
-        painter.drawText(pad_x + 3, int(pad_y + 11), "T")
-        painter.drawText(pad_x + 3, int(h - pad_y - 3), "B")
+            b_line.lineTo(xp(i), base_y - v * gh)
+        painter.strokePath(b_line, QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
 
         painter.end()
 
@@ -3038,10 +3033,12 @@ class SimDeckApp(QMainWindow):
             "simhub_host":       settings.get("simhub_host",       config.SIMHUB_HOST),
             "simhub_port":       settings.get("simhub_port",       config.SIMHUB_PORT),
             "update_dot_pulse":  settings.get("update_dot_pulse",  True),
-            "overlay_visible":   settings.get("overlay_visible",   False),
-            "overlay_opacity":   settings.get("overlay_opacity",   85),
-            "overlay_x":         settings.get("overlay_x",         None),
-            "overlay_y":         settings.get("overlay_y",         None),
+            "overlay_visible":      settings.get("overlay_visible",      False),
+            "overlay_bg_opacity":   settings.get("overlay_bg_opacity",   70),
+            "overlay_line_opacity": settings.get("overlay_line_opacity", 100),
+            "overlay_scale":        settings.get("overlay_scale",        100),
+            "overlay_x":            settings.get("overlay_x",            None),
+            "overlay_y":            settings.get("overlay_y",            None),
         }
 
         lights     = settings.get("lights", [])
@@ -3143,7 +3140,9 @@ class SimDeckApp(QMainWindow):
             on_install_update=self._do_install_update,
             on_pulse_change=self._on_pulse_change,
             on_overlay_change=self._on_overlay_show_change,
-            on_overlay_opacity_change=self._on_overlay_opacity_change,
+            on_overlay_bg_opacity_change=self._on_overlay_bg_opacity_change,
+            on_overlay_line_opacity_change=self._on_overlay_line_opacity_change,
+            on_overlay_scale_change=self._on_overlay_scale_change,
         )
         main_tabs.addTab(self._settings_tab, "Settings")
 
@@ -3184,7 +3183,9 @@ class SimDeckApp(QMainWindow):
 
         # Telemetry overlay
         self._overlay = TelemetryOverlay(self._engine)
-        self._overlay.set_alpha(self._app_settings["overlay_opacity"] / 100.0)
+        self._overlay.set_bg_alpha(  self._app_settings["overlay_bg_opacity"]   / 100.0)
+        self._overlay.set_line_alpha(self._app_settings["overlay_line_opacity"]  / 100.0)
+        self._overlay.set_scale(     self._app_settings["overlay_scale"])
         ox = self._app_settings.get("overlay_x")
         oy = self._app_settings.get("overlay_y")
         if ox is not None and oy is not None:
@@ -3355,10 +3356,20 @@ class SimDeckApp(QMainWindow):
         else:
             self._overlay.hide()
 
-    def _on_overlay_opacity_change(self, pct: int) -> None:
-        self._app_settings["overlay_opacity"] = pct
+    def _on_overlay_bg_opacity_change(self, pct: int) -> None:
+        self._app_settings["overlay_bg_opacity"] = pct
         self._save_settings()
-        self._overlay.set_alpha(pct / 100.0)
+        self._overlay.set_bg_alpha(pct / 100.0)
+
+    def _on_overlay_line_opacity_change(self, pct: int) -> None:
+        self._app_settings["overlay_line_opacity"] = pct
+        self._save_settings()
+        self._overlay.set_line_alpha(pct / 100.0)
+
+    def _on_overlay_scale_change(self, pct: int) -> None:
+        self._app_settings["overlay_scale"] = pct
+        self._save_settings()
+        self._overlay.set_scale(pct)
 
     def _on_pulse_change(self, enabled: bool) -> None:
         self._app_settings["update_dot_pulse"] = enabled

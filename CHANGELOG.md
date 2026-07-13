@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.7 — 2026-07-12
+### Changed
+- Overlay redrawn as lines-only (no fill): throttle (green) and brake (red) both rise from baseline in the same plane
+- Added separate Background opacity, Line opacity, and Scale (50–200%) sliders under Settings → OVERLAY; line width scales with overlay size
+
 ## v1.2.6 — 2026-07-12
 ### Added
 - **Telemetry overlay** — floating, always-on-top, transparent window showing a real-time scrolling throttle/brake graph; throttle (green) fills upward from center, brake (red) fills downward; draggable, position saved between sessions; toggle and opacity slider under Settings → OVERLAY
