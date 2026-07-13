@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simdeck"
+version = "1.3.2"
+description = "Sim racing companion app — LIFX effects, pedal overlay, lap logger"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6==6.11.1",
+    "psutil==7.2.2",
+    "lifxlan==1.2.9",
+    "pystray==0.19.5",
+    "pillow==10.4.0",
+    "bitstring==4.4.0",
+    "hidapi==0.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller",
+    "ruff",
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["simdeck*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
