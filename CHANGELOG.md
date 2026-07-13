@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.9 — 2026-07-12
+### Added
+- **Moza pedal integration** — reads `throttle-output` and `brake-output` directly from Moza hardware via USB serial at ~100 Hz; overlay automatically switches to hardware data when pedals are detected, falls back to SimHub telemetry otherwise
+- Moza status indicator (● dot + label) in Settings → OVERLAY showing connected port or "searching…"
+- `moza_pedals.py` — standalone module implementing the Moza serial protocol (protocol reference: boxflat)
+- `pyserial` added to requirements
+
 ## v1.2.8 — 2026-07-12
 ### Added
 - Overlay style dropdown in Settings → OVERLAY: **Mirrored** (throttle fill above / brake fill below center line) and **Lines** (both traces rise from baseline, no fill); selection persists between sessions

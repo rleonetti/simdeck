@@ -14,7 +14,7 @@ import webbrowser
 from collections import deque
 from typing import Callable
 
-__version__ = "1.2.8"
+__version__ = "1.2.9"
 _RELEASES_URL = "https://api.github.com/repos/rleonetti/simdeck/releases/latest"
 _RELEASES_PAGE = "https://github.com/rleonetti/simdeck/releases/latest"
 
@@ -37,6 +37,7 @@ import log_setup
 import settings_manager
 from effects import EFFECTS
 from engine import Engine
+from moza_pedals import MozaPedals
 from telemetry_logger import TelemetryLogger
 from udp_splitter import UDPSplitter
 
@@ -2743,6 +2744,20 @@ class SettingsTab(QWidget):
         _ovl_slider_row("Scale",               "overlay_scale",        100, 50, 200, 25, "%",
                         self._on_overlay_scale_change)
 
+        cv.addSpacing(10)
+        moza_row = QHBoxLayout()
+        moza_row.setSpacing(8)
+        moza_dot = QLabel("●")
+        moza_dot.setFixedWidth(14)
+        moza_dot.setStyleSheet(f"color: {_GREY};")
+        moza_row.addWidget(moza_dot)
+        self._moza_status_lbl = QLabel("Moza pedals: searching…")
+        self._moza_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+        moza_row.addWidget(self._moza_status_lbl)
+        moza_row.addStretch()
+        cv.addLayout(moza_row)
+        self._moza_dot = moza_dot
+
         # ── STARTUP ───────────────────────────────────────────────────────────
         cv.addSpacing(16)
         cv.addWidget(self._make_sep())
@@ -2884,6 +2899,16 @@ class SettingsTab(QWidget):
         self._update_status_lbl.setStyleSheet(f"color: #cc4444; font-size: 14px;")
         self._update_status_lbl.setText("Download failed — try again")
 
+    def set_moza_status(self, connected: bool, port: str | None) -> None:
+        if connected:
+            self._moza_dot.setStyleSheet(f"color: {_GREEN};")
+            self._moza_status_lbl.setStyleSheet(f"color: {_GREEN}; font-size: 13px;")
+            self._moza_status_lbl.setText(f"Moza pedals: connected ({port})")
+        else:
+            self._moza_dot.setStyleSheet(f"color: {_GREY};")
+            self._moza_status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 13px;")
+            self._moza_status_lbl.setText("Moza pedals: searching…")
+
     def _on_startup_toggled(self) -> None:
         self._on_startup_change(
             self._launch_chk.isChecked(),
@@ -2925,7 +2950,7 @@ class TelemetryOverlay(QWidget):
     THEME_MIRRORED = "mirrored"   # throttle above / brake below center line, filled
     THEME_LINES    = "lines"      # both lines rise from baseline, no fill
 
-    def __init__(self, engine: "Engine") -> None:
+    def __init__(self, engine: "Engine", moza: "MozaPedals | None" = None) -> None:
         super().__init__(
             None,
             Qt.WindowType.FramelessWindowHint
@@ -2936,6 +2961,7 @@ class TelemetryOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
         self._engine     = engine
+        self._moza       = moza
         self._throttle: deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
         self._brake:    deque = deque([0.0] * _OVL_HISTORY, maxlen=_OVL_HISTORY)
         self._bg_alpha   = 0.70
@@ -2972,9 +2998,15 @@ class TelemetryOverlay(QWidget):
         self.update()
 
     def _tick(self) -> None:
-        tel = self._engine.get_telemetry()
-        self._throttle.append(max(0.0, min(1.0, float(tel.get("throttle", 0.0)) / 100.0)))
-        self._brake.append(   max(0.0, min(1.0, float(tel.get("brake",    0.0)) / 100.0)))
+        if self._moza and self._moza.connected:
+            thr = self._moza.throttle
+            brk = self._moza.brake
+        else:
+            tel = self._engine.get_telemetry()
+            thr = max(0.0, min(1.0, float(tel.get("throttle", 0.0)) / 100.0))
+            brk = max(0.0, min(1.0, float(tel.get("brake",    0.0)) / 100.0))
+        self._throttle.append(thr)
+        self._brake.append(brk)
         self.update()
 
     def paintEvent(self, _) -> None:
@@ -3269,8 +3301,12 @@ class SimDeckApp(QMainWindow):
         self._engine.start(initial_kwargs)
         self._splitter.start()
 
+        # Moza pedal reader (high-rate hardware input, falls back to SimHub if unavailable)
+        self._moza = MozaPedals()
+        self._moza.start()
+
         # Telemetry overlay
-        self._overlay = TelemetryOverlay(self._engine)
+        self._overlay = TelemetryOverlay(self._engine, self._moza)
         self._overlay.set_theme(     self._app_settings["overlay_theme"])
         self._overlay.set_bg_alpha(  self._app_settings["overlay_bg_opacity"]   / 100.0)
         self._overlay.set_line_alpha(self._app_settings["overlay_line_opacity"]  / 100.0)
@@ -3385,6 +3421,8 @@ class SimDeckApp(QMainWindow):
         if sh != self._last_tray_status and self._tray:
             self._tray.icon = _make_tray_image(sh)
             self._last_tray_status = sh
+
+        self._settings_tab.set_moza_status(self._moza.connected, self._moza.port)
 
     def _check_game(self) -> None:
         exe, display = _detect_game()
@@ -3552,6 +3590,7 @@ class SimDeckApp(QMainWindow):
         self._save_settings()
         self._poll_timer.stop()
         self._game_timer.stop()
+        self._moza.stop()
         self._engine.stop()
         self._splitter.stop()
         if self._tray:

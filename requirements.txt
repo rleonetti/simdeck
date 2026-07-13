@@ -4,3 +4,4 @@ lifxlan
 pystray
 pillow
 bitstring
+pyserial
