@@ -2915,8 +2915,8 @@ class SettingsTab(QWidget):
 
 _OVL_W        = 320
 _OVL_H        = 80
-_OVL_FPS      = 20
-_OVL_HISTORY  = 200   # ~10s at 20Hz
+_OVL_FPS      = 60
+_OVL_HISTORY  = 600   # ~10s at 60Hz
 
 
 class TelemetryOverlay(QWidget):
