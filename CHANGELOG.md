@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.4.2 — 2026-07-21
+### Added
+- **"Bars (meters)" overlay theme** — vertical Clutch / Brake / Throttle meters (left-to-right, matching real pedal layout) with a 0/50/100 scale, replacing the trace-graph look with motorsport-HUD-style bars; selectable from Settings → OVERLAY → Style
+- **"Preview with sample data" button** in Settings → OVERLAY — shows the overlay animated with synthetic pedal input so it can be positioned and styled without SimHub or pedal hardware connected; the button turns green and its label changes to "● Previewing — click to stop" while active
+
+## v1.4.1 — 2026-07-16
+### Fixed
+- **AC Rally (and hillclimb) lap times now recorded** — added a fourth detection path for single-stage formats where the lap counter never increments: when `last_lap_time` becomes valid without `current_lap` changing, the stage time is saved; `flush_pending_lap` (called on manual stop or SimHub disconnect) also uses this path for all games, not just Forza
+
 ## v1.4.0 — 2026-07-13
 ### Changed
 - **Full internal rewrite** — `simdeck.py` (3688-line monolith) split into a proper `src/simdeck/ui/` package: `constants`, `theme`, `helpers`, `widgets`, `overlay`, `app`, and a `tabs/` sub-package (`lifx`, `lights`, `test`, `splitter`, `logger`, `history`, `settings`); no user-visible behaviour changes

@@ -31,6 +31,7 @@ class SettingsTab(QWidget):
                  on_overlay_bg_opacity_change: Callable[[int], None] | None = None,
                  on_overlay_line_opacity_change: Callable[[int], None] | None = None,
                  on_overlay_scale_change: Callable[[int], None] | None = None,
+                 on_overlay_preview_toggle: Callable[[bool], None] | None = None,
                  on_gradient_change: Callable[[bool], None] | None = None) -> None:
         super().__init__()
         self._on_font_change                  = on_font_change
@@ -45,6 +46,7 @@ class SettingsTab(QWidget):
         self._on_overlay_bg_opacity_change    = on_overlay_bg_opacity_change or (lambda _: None)
         self._on_overlay_line_opacity_change  = on_overlay_line_opacity_change or (lambda _: None)
         self._on_overlay_scale_change         = on_overlay_scale_change or (lambda _: None)
+        self._on_overlay_preview_toggle       = on_overlay_preview_toggle or (lambda _: None)
         self._on_gradient_change              = on_gradient_change or (lambda _: None)
         self._download_url: str               = ""
         self._build(settings)
@@ -176,6 +178,28 @@ class SettingsTab(QWidget):
         cv.addWidget(overlay_cb)
         cv.addSpacing(8)
 
+        preview_btn = QPushButton("Preview with sample data")
+        preview_btn.setCheckable(True)
+        preview_btn.setToolTip(
+            "Show the overlay animated with fake pedal input — no SimHub "
+            "connection or pedal hardware required. Handy for positioning "
+            "and styling the overlay before you're on track."
+        )
+        preview_btn_off_style = ""
+        preview_btn_on_style = (
+            f"QPushButton {{ background-color: {_GREEN}; border-color: {_GREEN}; color: #10190f; font-weight: 600; }}"
+            f"QPushButton:hover {{ background-color: {_GREEN}; border-color: {_GREEN}; }}"
+        )
+
+        def _on_preview_toggled(checked: bool) -> None:
+            preview_btn.setText("● Previewing — click to stop" if checked else "Preview with sample data")
+            preview_btn.setStyleSheet(preview_btn_on_style if checked else preview_btn_off_style)
+            self._on_overlay_preview_toggle(checked)
+
+        preview_btn.toggled.connect(_on_preview_toggled)
+        cv.addWidget(preview_btn)
+        cv.addSpacing(8)
+
         theme_row = QHBoxLayout()
         theme_row.setSpacing(10)
         theme_lbl = QLabel("Style")
@@ -184,8 +208,10 @@ class SettingsTab(QWidget):
         theme_combo = QComboBox()
         theme_combo.addItem("Mirrored (fill)",  "mirrored")
         theme_combo.addItem("Lines (baseline)", "lines")
+        theme_combo.addItem("Bars (meters)",    "bars")
         saved_theme = settings.get("overlay_theme", "mirrored")
-        theme_combo.setCurrentIndex(0 if saved_theme == "mirrored" else 1)
+        idx = theme_combo.findData(saved_theme)
+        theme_combo.setCurrentIndex(idx if idx >= 0 else 0)
         theme_combo.currentIndexChanged.connect(
             lambda _: self._on_overlay_theme_change(theme_combo.currentData())
         )

@@ -172,6 +172,7 @@ class SimDeckApp(QMainWindow):
             on_overlay_bg_opacity_change=self._on_overlay_bg_opacity_change,
             on_overlay_line_opacity_change=self._on_overlay_line_opacity_change,
             on_overlay_scale_change=self._on_overlay_scale_change,
+            on_overlay_preview_toggle=self._on_overlay_preview_toggle,
             on_gradient_change=self._on_gradient_change,
         )
         main_tabs.addTab(self._settings_tab, "Settings")
@@ -401,6 +402,13 @@ class SimDeckApp(QMainWindow):
         if visible:
             self._overlay.show()
         else:
+            self._overlay.hide()
+
+    def _on_overlay_preview_toggle(self, enabled: bool) -> None:
+        self._overlay.set_demo(enabled)
+        if enabled:
+            self._overlay.show()
+        elif not self._app_settings.get("overlay_visible", False):
             self._overlay.hide()
 
     def _on_overlay_bg_opacity_change(self, pct: int) -> None:

@@ -1,11 +1,13 @@
 """Frameless always-on-top telemetry overlay."""
 from __future__ import annotations
 
+import math
+import time
 from collections import deque
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
@@ -17,12 +19,21 @@ _OVL_H        = 80
 _OVL_FPS      = 60
 _OVL_HISTORY  = 600   # ~10s at 60Hz
 
+# Per-theme base footprint (before the user's scale % is applied) — the bar
+# meters read better tall-and-narrow than the wide trace graph.
+_BASE_SIZE = {
+    "mirrored": (320, 80),
+    "lines":    (320, 80),
+    "bars":     (170, 150),
+}
+
 
 class TelemetryOverlay(QWidget):
-    """Frameless always-on-top window with two rendering themes."""
+    """Frameless always-on-top window with three rendering themes."""
 
     THEME_MIRRORED = "mirrored"
     THEME_LINES    = "lines"
+    THEME_BARS     = "bars"
 
     def __init__(self, engine: "Engine", moza: "MozaPedals | None" = None) -> None:
         super().__init__(
@@ -44,6 +55,8 @@ class TelemetryOverlay(QWidget):
         self._scale      = 100
         self._theme      = self.THEME_MIRRORED
         self._drag_pos   = None
+        self._demo       = False
+        self._demo_t0    = 0.0
         self._apply_size()
 
         self._timer = QTimer(self)
@@ -52,8 +65,9 @@ class TelemetryOverlay(QWidget):
         self._timer.start()
 
     def _apply_size(self) -> None:
-        self.setFixedSize(max(80, int(_OVL_W * self._scale / 100)),
-                          max(30, int(_OVL_H * self._scale / 100)))
+        base_w, base_h = _BASE_SIZE.get(self._theme, (_OVL_W, _OVL_H))
+        self.setFixedSize(max(80, int(base_w * self._scale / 100)),
+                          max(30, int(base_h * self._scale / 100)))
 
     def set_bg_alpha(self, alpha: float) -> None:
         self._bg_alpha = max(0.0, min(1.0, alpha))
@@ -70,10 +84,28 @@ class TelemetryOverlay(QWidget):
 
     def set_theme(self, theme: str) -> None:
         self._theme = theme
+        self._apply_size()
         self.update()
 
+    def set_demo(self, enabled: bool) -> None:
+        """Feed synthetic pedal input instead of live telemetry — lets the
+        overlay be positioned/styled without SimHub or pedal hardware."""
+        self._demo = enabled
+        if enabled:
+            self._demo_t0 = time.monotonic()
+
+    def _demo_values(self) -> tuple[float, float, float]:
+        """Synthetic brake-then-accelerate cycle with a periodic clutch blip."""
+        t = time.monotonic() - self._demo_t0
+        thr = max(0.0, math.sin(t * 0.8))
+        brk = max(0.0, -math.sin(t * 0.8))
+        clu = 1.0 if (t % 4.0) < 0.4 else 0.0
+        return thr, brk, clu
+
     def _tick(self) -> None:
-        if self._moza and self._moza.connected:
+        if self._demo:
+            thr, brk, clu = self._demo_values()
+        elif self._moza and self._moza.connected:
             thr = self._moza.throttle
             brk = self._moza.brake
             clu = self._moza.clutch
@@ -113,6 +145,8 @@ class TelemetryOverlay(QWidget):
 
         if self._theme == self.THEME_MIRRORED:
             self._paint_mirrored(painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w)
+        elif self._theme == self.THEME_BARS:
+            self._paint_bars(painter, thr, brk, clu, pad_x, pad_y, gw, gh)
         else:
             self._paint_lines(painter, thr, brk, clu, xp, pad_x, pad_y, gw, gh, line_w)
 
@@ -190,6 +224,72 @@ class TelemetryOverlay(QWidget):
                            QPen(QColor(0xe7, 0x4c, 0x3c, int(255 * self._line_alpha)), line_w))
         painter.strokePath(self._smooth(c_pts),
                            QPen(QColor(0x3a, 0x9b, 0xdc, int(200 * self._line_alpha)), line_w))
+
+    def _paint_bars(self, painter, thr, brk, clu, pad_x, pad_y, gw, gh) -> None:
+        """Vertical THROTTLE / BRAKE / CLUTCH meters, motorsport-HUD style."""
+        from PySide6.QtCore import QRectF
+
+        scale  = self._scale / 100.0
+        cur_t  = thr[-1] if thr else 0.0
+        cur_b  = brk[-1] if brk else 0.0
+        cur_c  = clu[-1] if clu else 0.0
+
+        label_h = max(11.0, 12.0 * scale)
+        value_h = max(11.0, 12.0 * scale)
+        axis_w  = max(20.0, 22.0 * scale)
+
+        font_label = QFont()
+        font_label.setPointSizeF(max(6.0, 7.5 * scale))
+        font_label.setBold(True)
+        font_value = QFont()
+        font_value.setPointSizeF(max(6.0, 8.0 * scale))
+
+        track_top    = pad_y + label_h
+        track_bottom = pad_y + gh - value_h
+        track_h      = max(1.0, track_bottom - track_top)
+
+        # Axis ticks: 100 / 50 / 0
+        painter.setFont(font_value)
+        for frac, text in ((0.0, "100"), (0.5, "50"), (1.0, "0")):
+            y = track_top + frac * track_h
+            painter.setPen(QPen(QColor(70, 70, 70, int(140 * self._bg_alpha)), 1.0))
+            painter.drawLine(pad_x + axis_w, int(y), pad_x + gw, int(y))
+            painter.setPen(QPen(QColor(170, 170, 170, int(220 * self._line_alpha))))
+            painter.drawText(QRectF(pad_x, y - 7, axis_w - 4, 14),
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+
+        # Left-to-right matches real pedal layout: clutch, brake, throttle.
+        bars = (
+            ("CLU", cur_c, QColor(0x3a, 0x9b, 0xdc)),
+            ("BRK", cur_b, QColor(0xe7, 0x4c, 0x3c)),
+            ("THR", cur_t, QColor(0x2e, 0xcc, 0x71)),
+        )
+        cols_x0 = pad_x + axis_w
+        cols_w  = gw - axis_w
+        gap     = max(4.0, 6.0 * scale)
+        bar_w   = max(4.0, (cols_w - gap * (len(bars) - 1)) / len(bars))
+
+        for i, (label, value, color) in enumerate(bars):
+            x = cols_x0 + i * (bar_w + gap)
+
+            painter.setFont(font_label)
+            painter.setPen(QPen(QColor(220, 220, 220, int(230 * self._line_alpha))))
+            painter.drawText(QRectF(x, pad_y, bar_w, label_h),
+                             Qt.AlignmentFlag.AlignCenter, label)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(40, 40, 40, int(160 * self._bg_alpha))))
+            painter.drawRoundedRect(QRectF(x, track_top, bar_w, track_h), 3, 3)
+
+            fill_h = max(0.0, min(1.0, value)) * track_h
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(),
+                                           int(230 * self._line_alpha))))
+            painter.drawRoundedRect(QRectF(x, track_top + track_h - fill_h, bar_w, fill_h), 3, 3)
+
+            painter.setFont(font_value)
+            painter.setPen(QPen(QColor(230, 230, 230, int(230 * self._line_alpha))))
+            painter.drawText(QRectF(x, track_bottom + 2, bar_w, value_h),
+                             Qt.AlignmentFlag.AlignCenter, f"{int(round(value * 100))}")
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
